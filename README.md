@@ -23,29 +23,71 @@ Protocol-critical behavior implemented here:
 | `UV-17Pro` | Yes (`upload-logo-serial`) | `chunk` | Configured |
 | `UV-17R` | Yes (`upload-logo-serial`) | `chunk` | Configured |
 
-## Install
+## Prerequisites
+
+- Python `3.9+`
+- USB serial cable connected to radio
+- macOS/Linux shell examples below (Windows users can adapt paths/activation)
+
+## Install (From Scratch)
+
+Clone and enter the repo:
+
+```bash
+git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
+cd Baofeng-Logo-Flasher
+```
+
+Create and activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
 ```
 
-Install Streamlit UI support:
+Install CLI + Streamlit UI:
 
 ```bash
 pip install -e ".[ui]"
 ```
 
-## Quick Start
+Verify install:
 
-### 1. List serial ports
+```bash
+baofeng-logo-flasher --help
+baofeng-logo-flasher-ui --help
+```
+
+Optional: use Make targets:
+
+```bash
+make install
+```
+
+## Use (CLI)
+
+1. Find your serial port:
 
 ```bash
 baofeng-logo-flasher ports
 ```
 
-### 2. Flash a logo (recommended path)
+2. Check supported model names:
+
+```bash
+baofeng-logo-flasher list-models
+```
+
+3. Run a dry operation first (no write to radio):
+
+```bash
+baofeng-logo-flasher upload-logo-serial \
+  --port /dev/cu.Plser \
+  --in my_logo.png \
+  --model UV-5RM
+```
+
+4. Run a real write:
 
 ```bash
 baofeng-logo-flasher upload-logo-serial \
@@ -55,11 +97,29 @@ baofeng-logo-flasher upload-logo-serial \
   --write --confirm WRITE
 ```
 
-### 3. Launch web UI (optional)
+## Use (Web UI)
+
+Start Streamlit:
 
 ```bash
 baofeng-logo-flasher-ui
 ```
+
+Or:
+
+```bash
+make serve
+```
+
+In the app:
+1. `Step 1 · Connection`: select model/port (or let auto-detect settle).
+2. `Step 2 · Logo`: upload image (auto-converted to radio format).
+3. `Step 3 · Flash`: keep `Write mode` off for simulation; enable it only when ready.
+
+## Notes
+
+- For UV-5RM/UV-17 family, A5 writes use chunk-index addressing internally.
+- Direct A5 logo read-back is not implemented in this repo.
 
 ## Useful Commands
 
