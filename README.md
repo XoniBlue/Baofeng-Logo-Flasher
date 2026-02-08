@@ -1,175 +1,125 @@
 # Baofeng Logo Flasher
 
-Safety-first tooling for Baofeng boot logo workflows:
-- inspect/scan clone images
-- patch logos offline
-- run direct serial logo operations (model/firmware dependent)
-- use a CLI or Streamlit UI
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+[![CLI + Streamlit](https://img.shields.io/badge/interface-CLI%20%2B%20Streamlit-0A7EA4.svg)](src/baofeng_logo_flasher)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](pyproject.toml)
 
-## Project Status (as of February 8, 2026)
+Reliable boot-logo flashing for Baofeng UV-5RM and UV-17-family radios.
 
-### What is working now
+## Overview
 
-- CLI is fully wired and discoverable via `--help`.
-- Core offline workflow is usable today:
-  - `inspect-img`
-  - `scan-bitmaps` / `scan-logo`
-  - `patch-logo`
-  - `verify-image`
-- Safety gating is implemented for write operations:
-  - `--write` required
-  - confirmation token `WRITE` required (prompt or `--confirm WRITE`)
-- Streamlit UI runs and exposes the major workflows.
-- Local tests are passing in current environment:
-- Direct serial logo flashing still depends on radio model + firmware behavior.
-- Some UI patching behavior is less mature than CLI patching and needs alignment.
-- No automated, real-hardware CI validation yet.
+This repository provides a practical, working path for boot-logo flashing with:
+- direct serial A5 flashing (`upload-logo-serial`)
+- Streamlit UI backed by the same core logic
+- offline clone inspection and patching utilities
 
-If you need highest reliability right now, prefer the offline patch workflow first.
+Protocol-critical behavior implemented here:
+- UV-5RM/UV-17 A5 `CMD_WRITE` uses **chunk-index addressing** (`0,1,2,...`), not byte offsets.
 
-## Repo Progress
+## Support Matrix
 
-### Completed
-
-- CLI command surface for inspection, patching, and radio I/O.
-- Shared safety layer (`core/safety.py`) used for write gating.
-- Model capability reporting (`list-models`, `show-model-config`, `capabilities`).
-- Bitmap scanning and preview export pipeline.
-- Streamlit UI with tabs for flasher/capabilities/tools/verify.
-- Test coverage for parsing, codec/patching logic, and key flow components.
-
-### In progress
-
-- Normalizing model/protocol definitions so all commands report the same truth.
-- Tightening protocol certainty for UV-5RM/UV-17-family direct upload flows.
-- Improving UI parity with CLI for patch configuration.
-
-### Needs to be finished (priority order)
-
-1. Unify model configuration sources.
-- Remove duplicate/overlapping model definitions.
-- Ensure protocol/magic/reporting is consistent in `list-models`, `show-model-config`, and `capabilities`.
-
-2. Finish UI patch workflow parity.
-- Make UI patching use the same offset/format/size controls and codec path as CLI `patch-logo`.
-3. Expand hardware validation.
-- Add repeatable hardware test matrix by model + firmware.
-- Capture known-good/known-bad behavior per command (`download-logo`, `upload-logo`, `flash-logo`).
-
-4. Add CI and quality gates.
-- Run tests automatically on push/PR.
-- Track regressions for parser/model/protocol metadata.
-
-5. Finalize model support policy.
-- Explicitly mark each model as `supported`, `experimental`, or `discovery only` in docs and command output.
-
-## Requirements
-
-- Python `3.9+`
-- Core deps: `pyserial`, `pillow`, `rich`, `typer`
-- Optional UI dep: `streamlit`
+| Model | Direct A5 Flash | Address Mode | Status |
+|---|---|---|---|
+| `UV-5RM` | Yes (`upload-logo-serial`) | `chunk` | Working |
+| `UV-17Pro` | Yes (`upload-logo-serial`) | `chunk` | Configured |
+| `UV-17R` | Yes (`upload-logo-serial`) | `chunk` | Configured |
 
 ## Install
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
-With UI + dev extras:
+Install Streamlit UI support:
 
 ```bash
-pip install -e ".[ui,dev]"
+pip install -e ".[ui]"
 ```
 
 ## Quick Start
 
-### CLI
+### 1. List serial ports
 
 ```bash
-baofeng-logo-flasher --help
+baofeng-logo-flasher ports
 ```
 
-### UI
+### 2. Flash a logo (recommended path)
 
 ```bash
+baofeng-logo-flasher upload-logo-serial \
+  --port /dev/cu.Plser \
+  --in my_logo.png \
+  --model UV-5RM \
+  --write --confirm WRITE
 ```
 
-Alternative:
+### 3. Launch web UI (optional)
 
 ```bash
-streamlit run src/baofeng_logo_flasher/streamlit_ui.py
+baofeng-logo-flasher-ui
 ```
 
-## Safety Model
+## Useful Commands
 
-Write-capable commands are blocked unless explicitly enabled.
+| Command | Purpose |
+|---|---|
+| `baofeng-logo-flasher --help` | Full CLI help |
+| `baofeng-logo-flasher list-models` | Supported model configs |
+| `baofeng-logo-flasher show-model-config UV-5RM` | Effective model/protocol settings |
+| `baofeng-logo-flasher upload-logo-serial ...` | Direct serial logo upload |
+| `baofeng-logo-flasher inspect-img clone.img` | Clone metadata + hex preview |
+| `baofeng-logo-flasher scan-bitmaps clone.img` | Candidate logo region discovery |
 
-### Required for writes
-
-1. Pass `--write`
-2. Confirm with token `WRITE`
-
-Interactive terminal:
-- You will be prompted to type `WRITE`.
-
-
-```bash
-baofeng-logo-flasher upload-logo \
-
-
-### Device / model commands
-
-- `list-devices`
-- `list-models`
-- `show-model-config <model>`
-- `detect --port ...`
-### Offline image commands
-
-- `inspect-img <image.img>`
-- `scan-bitmaps <image.img> [--max N] [--step N] [--output DIR]`
-- `patch-logo <clone.img> <logo.png|jpg> --offset ... [--format ...] [--size WxH]`
-- `verify-image <clone.img>`
-### Radio commands
-- `read-clone --port ... [--output file]`
-- `download-logo --port ... [--out file] [--model ...] [--discover ...] [--raw]`
-- `upload-logo --port ... --in ... [--model ...] [--discover ...] [--dry-run] [--write] [--confirm WRITE]`
-
-baofeng-logo-flasher inspect-img clone.img
-baofeng-logo-flasher scan-bitmaps clone.img
-baofeng-logo-flasher patch-logo clone.img mylogo.png --offset 0x5A0 --format row_msb --size 128x64
-
-### 2. Then attempt direct radio write only after verification
+## Byte Debug Mode
 
 ```bash
-baofeng-logo-flasher upload-logo --port /dev/ttyUSB0 --in boot_logo.bmp --write
+baofeng-logo-flasher upload-logo-serial \
+  --port /dev/cu.Plser \
+  --in my_logo.png \
+  --model UV-5RM \
+  --write --confirm WRITE \
+  --debug-bytes --debug-dir out/logo_debug
 ```
 
-Current tabs:
-- `Capabilities`
-- `Tools & Inspect`
-- `Verify & Patch`
+Artifacts:
+- `image_payload.bin`
+- `write_payload_stream.bin`
+- `write_frames.bin`
+- `preview_row_major.png`
+- `manifest.json`
 
-Behavior:
-- Global safety panel and write-mode controls.
-- Simulation mode for flash-related workflows.
-- Warning surface for risky operations.
+## Repository Layout
 
-## Testing
+| Path | Role |
+|---|---|
+| `src/baofeng_logo_flasher/cli.py` | CLI entrypoint |
+| `src/baofeng_logo_flasher/streamlit_ui.py` | Streamlit UI entrypoint |
+| `src/baofeng_logo_flasher/protocol/logo_protocol.py` | A5 framing/chunking/CRC/image payload |
+| `src/baofeng_logo_flasher/boot_logo.py` | Model serial-flash config/address mode |
+| `src/baofeng_logo_flasher/core/actions.py` | Shared CLI/UI workflow logic |
+| `tests/` | Regression tests |
+| `tools/` | Optional developer diagnostics |
 
-Run:
+## Documentation
 
-```bash
-pytest tests/ -v
-```
+Top-level docs:
+- `TROUBLESHOOTING.md`
+- `LOGO_PROTOCOL.md`
+- `DEVELOPMENT.md`
+- `CHANGELOG.md`
 
-Current repo includes one manual integration test that is skipped by default (requires real radio).
+Supplemental docs:
+- `docs/UI_BEHAVIOR.md`
+- `docs/IMAGE_LAYOUT.md`
 
-## Documentation Index
+## Contributing Notes
 
-- `DEVELOPMENT.md` - architecture and extension guidance
-- `docs/UI_BEHAVIOR.md` - UI safety/confirmation behavior
-- `docs/IMAGE_LAYOUT.md` - clone layout and logo discovery workflow
-- `LOGO_PROTOCOL.md` - A5 protocol reference notes
-- `TROUBLESHOOTING.md` - setup/runtime troubleshooting
+Tests and tools remain in-repo for reliability and long-term maintenance.
+End users only need install + flash commands from this README.
+
+## License
+
+MIT

@@ -30,7 +30,6 @@ from baofeng_logo_flasher.bmp_utils import validate_bmp_bytes
 from baofeng_logo_flasher.logo_codec import (
     LogoCodec,
     BitmapFormat,
-    BITMAP_FORMAT_ALIASES,
 )
 from baofeng_logo_flasher.logo_patcher import LogoPatcher
 from baofeng_logo_flasher.protocol_verifier import ProtocolVerifier
@@ -40,7 +39,6 @@ from baofeng_logo_flasher.bitmap_scanner import scan_bytes, save_candidates
 from baofeng_logo_flasher.core.parsing import (
     parse_offset as _parse_offset_core,
     parse_bitmap_format as _parse_bitmap_format_core,
-    parse_size as _parse_size_core,
 )
 from baofeng_logo_flasher.core.safety import (
     SafetyContext,
@@ -51,23 +49,17 @@ from baofeng_logo_flasher.core.safety import (
 )
 from baofeng_logo_flasher.core.results import OperationResult
 from baofeng_logo_flasher.core.actions import (
-    flash_logo as core_flash_logo,
-    patch_logo_offline as core_patch_logo_offline,
-    read_clone as core_read_clone,
+    flash_logo_serial as core_flash_logo_serial,
 )
 from baofeng_logo_flasher.core.messages import (
     WarningItem,
-    WarningCode,
     MessageLevel,
     result_to_warnings,
-    COMMON_WARNINGS,
 )
 from baofeng_logo_flasher.models import (
-    list_models as registry_list_models,
     get_model as registry_get_model,
     detect_model as registry_detect_model,
     get_capabilities as registry_get_capabilities,
-    Capability,
     SafetyLevel,
 )
 
@@ -365,17 +357,17 @@ def list_models() -> None:
         table.add_column("Start Addr", style="yellow")
         table.add_column("Encrypted", style="red")
         table.add_column("Protocol", style="blue")
+        table.add_column("Write Addr", style="white")
 
         for name, cfg in sorted(SERIAL_FLASH_CONFIGS.items()):
             size = f"{cfg['size'][0]}x{cfg['size'][1]}"
             color = cfg.get("color_mode", "N/A")
             addr = f"0x{cfg.get('start_addr', 0):04X}"
             encrypted = "Yes" if cfg.get("encrypt", False) else "No"
-            # Determine protocol from magic bytes length
-            magic_len = len(cfg.get("magic", b""))
-            protocol = "UV17Pro" if magic_len == 16 else "UV5R"
+            protocol = cfg.get("protocol", "legacy")
+            write_addr = cfg.get("write_addr_mode", "-")
 
-            table.add_row(name, size, color, addr, encrypted, protocol)
+            table.add_row(name, size, color, addr, encrypted, protocol, str(write_addr))
 
         console.print(table)
 
@@ -426,20 +418,22 @@ def show_model_config(
         table.add_row("Start Address", f"0x{cfg.get('start_addr', 0):04X}")
         table.add_row("Block Size", str(cfg.get("block_size", 64)))
         table.add_row("Encryption", "Yes" if cfg.get("encrypt", False) else "No")
+        table.add_row("Protocol", str(cfg.get("protocol", "legacy")))
+        if "write_addr_mode" in cfg:
+            table.add_row("Write Addr Mode", str(cfg.get("write_addr_mode")))
         table.add_row("Baud Rate", str(cfg.get("baudrate", 9600)))
         table.add_row("Timeout", f"{cfg.get('timeout', 3.0)}s")
 
-        # Magic bytes
+        # Optional protocol magic display
         magic = cfg.get("magic", b"")
-        if len(magic) == 16:
-            table.add_row("Protocol", "UV17Pro (16-byte magic)")
-            try:
-                table.add_row("Magic String", magic.decode("ascii"))
-            except UnicodeDecodeError:
+        if magic:
+            if len(magic) == 16:
+                try:
+                    table.add_row("Magic String", magic.decode("ascii"))
+                except UnicodeDecodeError:
+                    table.add_row("Magic Bytes", magic.hex().upper())
+            else:
                 table.add_row("Magic Bytes", magic.hex().upper())
-        else:
-            table.add_row("Protocol", "UV5R (7-byte magic)")
-            table.add_row("Magic Bytes", magic.hex().upper())
 
         if cfg.get("encrypt"):
             key = cfg.get("key", b"")
@@ -647,39 +641,9 @@ def detect(
 
 
 @app.command()
-def inspect_img(image: str = typer.Argument(..., help="Path to clone image file")) -> None:
-    """Inspect CHIRP clone image for structure and safety."""
-    print_header("Image Inspection")
-
-    if not Path(image).exists():
-        print_error(f"File not found: {image}")
-        sys.exit(1)
-
-    # Call the inspection tool
-    import subprocess
-    result = subprocess.run(
-        ["python", "tools/inspect_img.py", image],
-        cwd=Path(__file__).parent.parent.parent,
-    )
-    sys.exit(result.returncode)
-
-
-@app.command()
 def scan_logo(image: str = typer.Argument(..., help="Path to clone image file")) -> None:
-    """Scan for candidate logo bitmap regions and export PNG previews."""
-    print_header("Bitmap Candidate Scan")
-
-    if not Path(image).exists():
-        print_error(f"File not found: {image}")
-        sys.exit(1)
-
-    # Call the scanning tool
-    import subprocess
-    result = subprocess.run(
-        ["python", "tools/scan_bitmap_candidates.py", image],
-        cwd=Path(__file__).parent.parent.parent,
-    )
-    sys.exit(result.returncode)
+    """Alias for scan-bitmaps command."""
+    scan_bitmaps_cmd(image_path=image)
 
 
 @app.command()
@@ -1070,6 +1034,112 @@ def upload_logo(
     finally:
         if transport is not None:
             transport.close()
+
+
+@app.command("upload-logo-serial")
+def upload_logo_serial(
+    port: str = typer.Option(..., "--port", "-p", help="Serial port"),
+    image: str = typer.Option(..., "--in", "-i", help="Input image (BMP/PNG/JPG)"),
+    model: str = typer.Option("UV-5RM", "--model", help="Model name from list-models"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate only, no write"),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Required flag to enable actual write to radio",
+    ),
+    confirm: Optional[str] = typer.Option(
+        None,
+        "--confirm",
+        help="Non-interactive confirmation token (must be 'WRITE' for write operations)",
+    ),
+    debug_bytes: bool = typer.Option(
+        False,
+        "--debug-bytes",
+        help="Dump payload/frame bytes and preview image before send",
+    ),
+    debug_dir: str = typer.Option(
+        "out/logo_debug",
+        "--debug-dir",
+        help="Output directory for debug byte artifacts",
+    ),
+    write_addr_mode: str = typer.Option(
+        "auto",
+        "--write-addr-mode",
+        help="CMD_WRITE address mode: auto, byte, or chunk",
+    ),
+) -> None:
+    """
+    Upload logo via A5 serial protocol (UV-5RM/UV-17 family).
+
+    This is the direct protocol path used by the Streamlit flasher.
+    """
+    print_header("Upload Logo (Serial A5)")
+
+    if model not in SERIAL_FLASH_CONFIGS:
+        print_error(f"Model '{model}' is not in SERIAL_FLASH_CONFIGS")
+        sys.exit(1)
+
+    if not Path(image).exists():
+        print_error(f"File not found: {image}")
+        sys.exit(1)
+
+    config = dict(SERIAL_FLASH_CONFIGS[model])
+    if config.get("protocol") != "a5_logo":
+        print_error(f"Model '{model}' is not configured for A5 logo upload")
+        sys.exit(1)
+
+    if write_addr_mode not in {"auto", "byte", "chunk"}:
+        print_error("Invalid --write-addr-mode (use 'auto', 'byte', or 'chunk')")
+        sys.exit(1)
+
+    effective_mode = None if write_addr_mode == "auto" else write_addr_mode
+
+    if not dry_run:
+        # Reuse standard confirmation UX
+        confirm_write_with_details(
+            write_flag=write,
+            model=model,
+            target_region="A5 logo upload region (device-managed)",
+            bytes_length=config["size"][0] * config["size"][1] * 2,
+            offset=0,
+            confirm_token=confirm,
+        )
+
+    safety_ctx = create_cli_safety_context(
+        write_flag=write,
+        model=model,
+        region_known=True,
+        simulate=dry_run,
+        confirmation_token=confirm,
+    )
+
+    def _progress_cb(done: int, total: int) -> None:
+        if total <= 0:
+            return
+        pct = int((done / total) * 100)
+        logger.info("Image write progress: %d/%d bytes (%d%%)", done, total, pct)
+
+    result = core_flash_logo_serial(
+        port=port,
+        bmp_path=image,
+        config=config,
+        safety_ctx=safety_ctx,
+        progress_cb=_progress_cb,
+        debug_bytes=debug_bytes,
+        debug_output_dir=debug_dir,
+        write_address_mode=effective_mode,
+    )
+
+    if not result.ok:
+        print_error("\n".join(result.errors) if result.errors else "Serial upload failed")
+        if result.logs:
+            for line in result.logs[-20:]:
+                console.print(line, style="dim")
+        sys.exit(1)
+
+    print_success(result.metadata.get("result_message", "Serial upload complete"))
+    if debug_bytes:
+        print_success(f"Debug artifacts written to {debug_dir}")
 
 
 @app.command()

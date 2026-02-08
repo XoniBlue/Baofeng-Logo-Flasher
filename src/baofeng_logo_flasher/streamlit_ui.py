@@ -422,6 +422,9 @@ def tab_boot_logo_flasher():
         )
         st.session_state.selected_model = model
         config = dict(SERIAL_FLASH_CONFIGS[model])
+        write_addr_mode = config.get("write_addr_mode", "byte")
+
+        st.caption(f"A5 write address mode: {write_addr_mode}")
 
         st.divider()
 
@@ -640,7 +643,14 @@ def tab_boot_logo_flasher():
         "region": f"0x{config.get('start_addr', 0):04X}",
         "bytes_length": config["size"][0] * config["size"][1] * 3,
         "operation": "flash_logo_serial",
+        "write_addr_mode": config.get("write_addr_mode", "byte"),
     }
+
+    debug_bytes = st.checkbox(
+        "🧰 Protocol Debug Bytes",
+        value=False,
+        help="Dump payload/frame artifacts to out/streamlit_logo_debug for verification",
+    )
 
     # Write confirmation (only if not simulating)
     if not simulate:
@@ -670,10 +680,26 @@ def tab_boot_logo_flasher():
         elif not simulate and not write_confirmed:
             st.error("❌ Write confirmation required. Complete the confirmation steps above.")
         else:
-            _do_flash(port, bmp_file, config, simulate, write_confirmed, model)
+            _do_flash(
+                port,
+                bmp_file,
+                config,
+                simulate,
+                write_confirmed,
+                model,
+                debug_bytes=debug_bytes,
+            )
 
 
-def _do_flash(port: str, bmp_file, config: dict, simulate: bool, write_confirmed: bool, model: str):
+def _do_flash(
+    port: str,
+    bmp_file,
+    config: dict,
+    simulate: bool,
+    write_confirmed: bool,
+    model: str,
+    debug_bytes: bool = False,
+):
     """Execute the flash operation using core safety module."""
     bmp_path = None
     try:
@@ -713,6 +739,8 @@ def _do_flash(port: str, bmp_file, config: dict, simulate: bool, write_confirmed
                 config=config,
                 safety_ctx=safety_ctx,
                 progress_cb=_progress_cb if not simulate else None,
+                debug_bytes=debug_bytes,
+                debug_output_dir="out/streamlit_logo_debug",
             )
 
         # Success output
@@ -737,6 +765,9 @@ def _do_flash(port: str, bmp_file, config: dict, simulate: bool, write_confirmed
                 4. Close serial port in this app before using other tools
                 """
             )
+
+        if debug_bytes:
+            st.caption("Debug artifacts: out/streamlit_logo_debug")
 
         # Show any warnings from the operation
         if result.warnings:
@@ -791,7 +822,7 @@ def _do_flash(port: str, bmp_file, config: dict, simulate: bool, write_confirmed
 
                 The correct boot logo offset in your clone file can be discovered using:
                 ```
-                python tools/scan_bitmap_candidates.py clone.img
+                baofeng-logo-flasher scan-bitmaps clone.img
                 ```
                 """
             )

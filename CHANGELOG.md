@@ -1,0 +1,30 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+## [Unreleased]
+
+## [0.2.0] - 2026-02-08
+
+### Added
+- Direct A5 serial flashing command: `upload-logo-serial`.
+- Byte-debug artifact export for serial flashing (`--debug-bytes`, `--debug-dir`).
+- Protocol tests for frame construction and payload behavior.
+- Developer tooling:
+  - `tools/logo_payload_tools.py`
+  - `tools/generate_logo_probes.py`
+
+### Changed
+- Fixed UV-5RM/UV-17-family write addressing for A5 `CMD_WRITE`:
+  - switched to chunk-index addressing (`0,1,2,...`) for configured models.
+- Streamlit and CLI now use aligned serial flashing behavior through shared core actions.
+- Documentation overhaul for root-level discoverability and user-first workflows.
+
+### Removed
+- Redundant legacy helper scripts replaced by CLI commands:
+  - `tools/inspect_img.py`
+  - `tools/scan_bitmap_candidates.py`
+- Historical/local artifacts from tracked repository content.
+
+### Notes
+- This release resolves the common symptom where flash appeared successful but display showed a top-line fragment with gray/garbled remainder.

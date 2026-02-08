@@ -1,16 +1,24 @@
 # Development Guide
 
-This document describes the current architecture and extension points in this workspace.
+Implementation guide for contributors. For end-user setup, see `README.md`.
 
-## Runtime Targets
+## Doc Map
 
-- CLI entrypoint: `src/baofeng_logo_flasher/cli.py`
-- UI entrypoint: `src/baofeng_logo_flasher/streamlit_ui.py`
+- Product usage: `README.md`
+- Protocol specifics: `LOGO_PROTOCOL.md`
+- Runtime issues: `TROUBLESHOOTING.md`
+- UI details: `docs/UI_BEHAVIOR.md`
+- Clone layout notes: `docs/IMAGE_LAYOUT.md`
+
+## Runtime Entry Points
+
+- CLI: `src/baofeng_logo_flasher/cli.py`
+- UI: `src/baofeng_logo_flasher/streamlit_ui.py`
 - Package metadata/scripts: `pyproject.toml`
 
 ## Architecture
 
-### 1. Protocol Layer
+### Protocol Layer
 
 Files:
 - `src/baofeng_logo_flasher/protocol/uv5rm_transport.py`
@@ -18,99 +26,104 @@ Files:
 - `src/baofeng_logo_flasher/protocol/logo_protocol.py`
 
 Responsibilities:
-- Serial transport management
-- Radio identify/read/write operations
-- A5 logo-protocol framing support
+- serial transport
+- clone identify/read/write protocol
+- A5 logo framing, CRC, chunking, payload conversion
 
-### 2. Boot Logo Layer
+### Boot Logo Layer
 
 File:
 - `src/baofeng_logo_flasher/boot_logo.py`
 
 Responsibilities:
-- Boot logo service abstractions
-- Model flash configuration (`SERIAL_FLASH_CONFIGS`)
-- Image conversion helpers for radio logo formats
+- `SERIAL_FLASH_CONFIGS`
+- route between legacy/clone path and A5 path
+- model-specific write addressing behavior
+
+Critical behavior:
+- UV-5RM/UV-17 family use `write_addr_mode: "chunk"`.
+
+### Core Actions and Safety
+
 Files:
 - `src/baofeng_logo_flasher/core/actions.py`
 - `src/baofeng_logo_flasher/core/safety.py`
 - `src/baofeng_logo_flasher/core/parsing.py`
-Responsibilities:
-- Shared operations for CLI/UI
 
-### 4. Image Tools Layer
+Responsibilities:
+- shared CLI/UI workflows
+- write permission contract
+- simulation behavior
+
+### Image and Patch Utilities
+
+Files:
+- `src/baofeng_logo_flasher/logo_codec.py`
 - `src/baofeng_logo_flasher/logo_patcher.py`
 - `src/baofeng_logo_flasher/bitmap_scanner.py`
 
 Responsibilities:
+- clone bitmap format handling
+- offline patching
+- candidate bitmap discovery
 
-### 5. Model Registry Layer
+### Model Registry
+
+File:
+- `src/baofeng_logo_flasher/models/registry.py`
+
 Responsibilities:
-- Model protocol config and capabilities
+- model metadata
+- capabilities and safety hints
 
-### 6. UI Components Layer
+## Command Paths
 
-Responsibilities:
+### Direct A5 Flash Path
+
+- CLI command: `upload-logo-serial`
+- shared action: `core.actions.flash_logo_serial`
+- protocol implementation: `protocol.logo_protocol`
+
+### Clone Patch Path
+
+- commands: `patch-logo`, `flash-logo`, `upload-logo`, `download-logo`
+- protocol modules: `uv5rm_protocol`, `uv5rm_transport`
+
 ## Safety Contract
 
-Expected checks:
-- Explicit write enablement
-- Confirmation token handling (`WRITE`)
-- Simulation mode bypass for non-destructive runs
+Real writes require:
+- `--write`
+- `WRITE` confirmation token
 
-- `ports`, `list-devices`, `list-models`, `show-model-config`
-- `capabilities`, `detect`
-- `inspect-img`, `scan-logo`, `scan-bitmaps`, `patch-logo`, `verify-image`
-`streamlit_ui.py` tabs:
-- Capabilities
-- Tools & Inspect
-- Verify & Patch
-Global safety panel is rendered from `ui/components.py`.
+Simulation/dry paths must not write to radio.
 
-## Tooling
+## Debug and Byte-True Tooling
+
+- `--debug-bytes --debug-dir ...` on `upload-logo-serial`
+- `tools/logo_payload_tools.py`
+- `tools/generate_logo_probes.py`
+
+## Local Development
+
 ### Install
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[ui,dev]"
 ```
 
-### Make Targets
+### Test
 
-See `Makefile` for:
-- `make install`
-- `make serve` / `make start` / `make stop`
-- `make test`
-- `make clean`
+```bash
+pytest tests/ -v
+```
 
-## Adding or Changing Features
+## Change Rule
 
-### Add a new CLI command
-
-1. Add Typer command in `cli.py`.
-2. Reuse shared parsers/safety/core actions where possible.
-3. Keep destructive operations behind write-gating and confirmation.
-4. Add tests under `tests/`.
-5. Update `README.md` command list.
-
-### Add or update model behavior
-
-1. Update `models/registry.py`.
-2. Update or map serial settings in `boot_logo.py` if needed.
-3. Validate through `list-models`, `show-model-config`, and `capabilities`.
-4. Update docs with model caveats.
-
-### Add a UI workflow
-
-1. Add UI control in `streamlit_ui.py`.
-2. Use `ui/components.py` for safety/confirmation patterns.
-3. Use `core.actions` for shared operation logic where possible.
-
-## Known Documentation Rule
-
-If command behavior changes, update these in the same change set:
+When protocol defaults or command behavior change, update these docs in the same change:
 - `README.md`
+- `LOGO_PROTOCOL.md`
+- `TROUBLESHOOTING.md`
 - `DEVELOPMENT.md`
 - `docs/UI_BEHAVIOR.md`
-- `docs/IMAGE_LAYOUT.md` (if discovery/format assumptions change)
-- `TROUBLESHOOTING.md` (if connection expectations change)

@@ -129,12 +129,12 @@ class ProtocolVerifier:
             return result
         
         # Check 3: Logo offset/size not yet determined
-        # (This is discovered via scan_bitmap_candidates)
+        # (This is discovered via `baofeng-logo-flasher scan-bitmaps`)
         result['checks']['logo_offset_determined'] = False
         result['warnings'].append(
             "Logo offset and format NOT YET DETERMINED. "
             "Before writing, you must:\n"
-            "  1. Run: python tools/scan_bitmap_candidates.py <image>\n"
+            "  1. Run: baofeng-logo-flasher scan-bitmaps <image>\n"
             "  2. Visually inspect PNG previews in out/previews/\n"
             "  3. Identify the logo location and format\n"
             "  4. Use that offset + format in flash-logo command"

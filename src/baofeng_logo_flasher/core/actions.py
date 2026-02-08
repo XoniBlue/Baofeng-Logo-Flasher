@@ -599,6 +599,9 @@ def flash_logo_serial(
     config: Dict[str, Any],
     safety_ctx: SafetyContext,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    debug_bytes: bool = False,
+    debug_output_dir: Optional[str] = None,
+    write_address_mode: Optional[str] = None,
 ) -> OperationResult:
     """
     Flash boot logo via direct serial protocol (UV-5RM style).
@@ -611,6 +614,10 @@ def flash_logo_serial(
         config: Model config dict from SERIAL_FLASH_CONFIGS
         safety_ctx: Safety context for gating
         progress_cb: Optional progress callback
+        debug_bytes: If True, dump protocol payload/frame artifacts
+        debug_output_dir: Directory for debug artifact dumps
+        write_address_mode: CMD_WRITE address semantics ("byte" or "chunk").
+            If None, model config decides (recommended).
 
     Returns:
         OperationResult with flash status
@@ -642,6 +649,9 @@ def flash_logo_serial(
                 config=config,
                 simulate=safety_ctx.simulate,
                 progress_cb=progress_cb,
+                debug_bytes=debug_bytes,
+                debug_output_dir=debug_output_dir,
+                write_address_mode=write_address_mode,
             )
 
             result = OperationResult.success(

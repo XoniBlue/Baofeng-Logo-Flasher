@@ -133,6 +133,7 @@ class TestModelConfigs:
         # New A5 protocol uses 'protocol' key instead of 'encrypt'
         assert config.get("protocol") == "a5_logo"
         assert config.get("color_mode") == "RGB565"
+        assert config.get("write_addr_mode") == "chunk"
 
     def test_dm32uv_config_exists(self):
         """DM-32UV should be in configs."""
@@ -192,10 +193,12 @@ class TestA5Protocol:
         config = SERIAL_FLASH_CONFIGS["UV-17Pro"]
         assert config.get("protocol") == "a5_logo"
         assert config.get("baudrate") == 115200
-        assert config.get("chunk_size") == 1004
+        assert config.get("chunk_size") == 1024
+        assert config.get("write_addr_mode") == "chunk"
 
     def test_uv17r_has_a5_protocol(self):
         """UV-17R should also use A5 protocol."""
         assert "UV-17R" in SERIAL_FLASH_CONFIGS
         config = SERIAL_FLASH_CONFIGS["UV-17R"]
         assert config.get("protocol") == "a5_logo"
+        assert config.get("write_addr_mode") == "chunk"

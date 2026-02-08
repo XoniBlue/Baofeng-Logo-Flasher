@@ -203,7 +203,7 @@ def _init_registry() -> None:
             "Uses A5 logo protocol (T6UV CPS compatible)",
             "160x128 RGB565 display",
             "Logo uploaded via 'D' mode after handshake",
-            "Data sent in 1004-byte chunks with CRC16-XMODEM checksum",
+            "Data sent in 1024-byte chunks with CRC16-XMODEM checksum",
         ],
     ))
 

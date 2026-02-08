@@ -1,100 +1,109 @@
 # Troubleshooting
 
-## 1. CLI import or dependency errors
+Quick fixes for common runtime problems. For setup and normal usage, see `README.md`.
 
-### `ImportError: PySerial required`
+## 1. Dependency errors
 
-Install project dependencies in the active environment:
+If imports fail, install package dependencies in the active environment:
 
 ```bash
 pip install -e .
 ```
 
-For UI usage:
+For Streamlit UI:
 
 ```bash
 pip install -e ".[ui]"
 ```
 
-## 2. Command not found (`baofeng-logo-flasher`)
+## 2. CLI command not found
 
-You likely have not installed the package in your current environment.
+Install the package in your current environment:
 
 ```bash
 pip install -e .
 ```
 
-Or run via module in a configured env:
+Or run directly as a module:
 
 ```bash
-PYTHONPATH=src python3 -m baofeng_logo_flasher.cli --help
+PYTHONPATH=src python -m baofeng_logo_flasher.cli --help
 ```
 
-## 3. No serial ports listed
+## 3. Serial port errors
 
-Check ports:
+List ports first:
 
 ```bash
 baofeng-logo-flasher ports
 ```
 
-If none appear:
-- Verify cable/adapter and USB permissions
-- Close apps that may hold the port (CHIRP, terminal serial monitors)
-- Reconnect device and re-run `ports`
+Use the full path, for example `/dev/cu.Plser`.
 
-## 4. Radio detection/read failures
+## 4. Flash reports success but display shows top line + gray screen
 
-Try in order:
-1. Validate the port path with `ports`
-2. Run `detect --port ...`
-3. Run `read-clone --port ...` to confirm baseline communication
-4. Compare behavior with CHIRP on the same cable/port
+This symptom is strongly tied to incorrect write addressing mode.
 
-If CHIRP works and this tool does not, capture the exact CLI error output and model/firmware details before adjusting protocol assumptions.
+Expected for UV-5RM/UV-17 A5 flashing:
+- `write_addr_mode: chunk`
 
-## 5. Write blocked unexpectedly
+Checks:
+1. Pull latest code.
+2. Fully restart Streamlit if using UI.
+3. Validate once with CLI:
 
-Write commands intentionally fail unless safety requirements are met.
+```bash
+baofeng-logo-flasher upload-logo-serial \
+  --port /dev/cu.Plser \
+  --in my_logo.png \
+  --model UV-5RM \
+  --write --confirm WRITE
+```
 
-Required for writes:
+## 5. Verify exact transmitted bytes
+
+```bash
+baofeng-logo-flasher upload-logo-serial \
+  --port /dev/cu.Plser \
+  --in my_logo.png \
+  --model UV-5RM \
+  --write --confirm WRITE \
+  --debug-bytes --debug-dir out/logo_debug
+```
+
+Inspect `out/logo_debug/manifest.json` for:
+- `address_mode` should be `chunk`
+- `image_bytes` should be `40960`
+- `frame_count` should be `40`
+
+## 6. Streamlit behaves like stale code
+
+- stop Streamlit
+- restart Streamlit
+- re-run flash
+- if needed, enable debug-bytes and inspect `out/streamlit_logo_debug/manifest.json`
+
+## 7. Write blocked
+
+Write operations require both:
 - `--write`
-- confirmation token `WRITE` (interactive prompt or `--confirm WRITE`)
+- confirmation token `WRITE`
 
-For scripts/non-interactive shells, include both flags explicitly.
+## 8. Offline clone patch errors
 
-## 6. Image patch errors
+Use accepted value formats:
+- offset: `4096`, `0x1000`, `1000h`
+- format: `row_msb`, `row_lsb`, `page_msb`, `page_lsb`
+- size: `WxH` such as `128x64`
 
-### Invalid offset/format/size
-
-Use exact forms:
-- Offset: decimal (`4096`), hex (`0x1000`), or suffix (`1000h`)
-- Format: `row_msb`, `row_lsb`, `page_msb`, `page_lsb`
-- Size: `WxH` (example `128x64`)
-
-### Candidate region unknown
-
-Run discovery first:
+If logo region is unknown:
 
 ```bash
 baofeng-logo-flasher scan-bitmaps clone.img
 ```
 
-Review previews before patching.
-
-## 7. UI does not start
-
-Install UI extra and launch again:
-
-```bash
-pip install -e ".[ui]"
-baofeng-logo-flasher-ui
-```
-
-## 8. Run tests to verify environment
+## 9. Run tests
 
 ```bash
 pytest tests/ -v
 ```
-
-If tests fail because dependencies are missing, reinstall in a fresh virtual environment.

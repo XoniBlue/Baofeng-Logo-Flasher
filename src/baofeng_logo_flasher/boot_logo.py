@@ -119,9 +119,10 @@ SERIAL_FLASH_CONFIGS: Dict[str, Dict] = {
         "size": (160, 128),
         "color_mode": "RGB565",
         "protocol": "a5_logo",  # New A5 framing logo protocol
+        "write_addr_mode": "chunk",  # CMD_WRITE addr increments by chunk index
         "baudrate": 115200,
         "timeout": 2.0,
-        "chunk_size": 1004,
+        "chunk_size": 1024,
         "handshake": b"PROGRAMBFNORMALU",
         "handshake_ack": b"\x06",
     },
@@ -129,9 +130,10 @@ SERIAL_FLASH_CONFIGS: Dict[str, Dict] = {
         "size": (160, 128),
         "color_mode": "RGB565",
         "protocol": "a5_logo",
+        "write_addr_mode": "chunk",
         "baudrate": 115200,
         "timeout": 2.0,
-        "chunk_size": 1004,
+        "chunk_size": 1024,
         "handshake": b"PROGRAMBFNORMALU",
         "handshake_ack": b"\x06",
     },
@@ -139,9 +141,10 @@ SERIAL_FLASH_CONFIGS: Dict[str, Dict] = {
         "size": (160, 128),
         "color_mode": "RGB565",
         "protocol": "a5_logo",
+        "write_addr_mode": "chunk",
         "baudrate": 115200,
         "timeout": 2.0,
-        "chunk_size": 1004,
+        "chunk_size": 1024,
         "handshake": b"PROGRAMBFNORMALU",
         "handshake_ack": b"\x06",
     },
@@ -464,6 +467,9 @@ def flash_logo(
     config: Dict,
     simulate: bool = False,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    debug_bytes: bool = False,
+    debug_output_dir: Optional[str] = None,
+    write_address_mode: Optional[str] = None,
 ) -> str:
     """
     Flash boot logo to radio via serial connection.
@@ -477,6 +483,10 @@ def flash_logo(
         config: Model config from SERIAL_FLASH_CONFIGS
         simulate: If True, skip actual flash
         progress_cb: Optional callback(bytes_sent, total_bytes)
+        debug_bytes: If True, dump payload/frame artifacts before send
+        debug_output_dir: Optional output directory for debug artifacts
+        write_address_mode: CMD_WRITE address semantics ("byte" or "chunk").
+            If None, defaults from model config (write_addr_mode) or "byte".
 
     Returns:
         Success message string
@@ -485,10 +495,20 @@ def flash_logo(
         raise BootLogoError("PySerial not installed")
 
     protocol_type = config.get("protocol", "legacy")
+    effective_write_address_mode = write_address_mode or config.get("write_addr_mode", "byte")
 
     # Check for new A5 logo protocol (UV-5RM, UV-17Pro, etc.)
     if protocol_type == "a5_logo":
-        return _flash_logo_a5_protocol(port, bmp_path, config, simulate, progress_cb)
+        return _flash_logo_a5_protocol(
+            port,
+            bmp_path,
+            config,
+            simulate,
+            progress_cb,
+            debug_bytes=debug_bytes,
+            debug_output_dir=debug_output_dir,
+            write_address_mode=effective_write_address_mode,
+        )
     else:
         return _flash_logo_legacy_protocol(port, bmp_path, config, simulate, progress_cb)
 
@@ -499,6 +519,9 @@ def _flash_logo_a5_protocol(
     config: Dict,
     simulate: bool = False,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    debug_bytes: bool = False,
+    debug_output_dir: Optional[str] = None,
+    write_address_mode: str = "byte",
 ) -> str:
     """
     Flash logo using the A5 framing protocol for UV-5RM/UV-17Pro.
@@ -510,7 +533,7 @@ def _flash_logo_a5_protocol(
     3. Init frame (cmd 0x02)
     4. Config frame (cmd 0x04) at 0x4504
     5. Setup frame (cmd 0x03)
-    6. Image data in 1004-byte chunks (cmd 0x57)
+    6. Image data in 1024-byte chunks (cmd 0x57)
     7. Completion frame (cmd 0x06) with "Over"
     """
     from .protocol.logo_protocol import upload_logo as protocol_upload_logo
@@ -527,7 +550,15 @@ def _flash_logo_a5_protocol(
             return f"Simulation: Would upload image to {port} (could not read: {e})"
 
     logger.info(f"Flashing logo using A5 protocol to {port}")
-    return protocol_upload_logo(port, bmp_path, progress_cb, simulate=False)
+    return protocol_upload_logo(
+        port,
+        bmp_path,
+        progress_cb,
+        simulate=False,
+        debug_bytes=debug_bytes,
+        debug_output_dir=debug_output_dir,
+        address_mode=write_address_mode,
+    )
 
 
 def _flash_logo_legacy_protocol(

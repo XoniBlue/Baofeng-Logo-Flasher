@@ -29,7 +29,11 @@ htmlcov/
 # Runtime
 *.img.bak
 backups/
+out/
 out/previews/
+*_payload.bin
+*.zip
+*.pcapng
 
 # OS
 .DS_Store

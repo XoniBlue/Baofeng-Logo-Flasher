@@ -1,131 +1,78 @@
-# A5 Logo Protocol Reference (UV-5RM / UV-17 Family)
+# Logo Protocol Notes (A5 Serial)
 
-Technical reference for the direct logo upload flow implemented in this project.
-
-Use this document as a protocol note, not as a guarantee that every firmware variant accepts the same sequence.
+Implementation notes for direct logo upload used in this repository.
+For end-user instructions, see `README.md`.
 
 ## Scope
 
-Applies to the A5-framed boot logo upload workflow used for models configured with:
-- Handshake: `PROGRAMBFNORMALU`
-- Baud: `115200`
-- Payload format: `RGB565` (`160x128`)
+Applies to models configured for direct A5 flashing in `src/baofeng_logo_flasher/boot_logo.py`.
 
-Related code:
-- `src/baofeng_logo_flasher/boot_logo.py`
+Primary implementation files:
 - `src/baofeng_logo_flasher/protocol/logo_protocol.py`
+- `src/baofeng_logo_flasher/boot_logo.py`
 - `src/baofeng_logo_flasher/core/actions.py`
 
-## Transport Settings
+## Critical Behavior
 
-- Serial: `115200`, `8N1`
-- Timeout: model/config dependent
-- Handshake ACK expected: `0x06`
+For tested UV-5RM/UV-17-family firmware, `CMD_WRITE (0x57)` addressing is chunk-indexed.
 
-## High-Level Upload Sequence
+Working mode:
+- address sequence: `0x0000`, `0x0001`, `0x0002`, ...
+- payload length: `0x0400` bytes per write frame
 
-```text
-1) Send handshake: PROGRAMBFNORMALU (16 bytes)
-   Expect: 06
+Known failing mode:
+- address sequence: `0x0000`, `0x0400`, `0x0800`, ...
+- observed symptom: top-line image fragment + gray/garbled rest of display
 
-2) Send mode byte: 44 ('D')
-   Expect: (none or device-specific)
+Configured defaults use `write_addr_mode: "chunk"` for supported UV-5RM/UV-17 entries.
 
-3) Send init frame (cmd 0x02, payload "PROGRAM")
-   Expect: A5 ... 59 ...  (Y/ack payload)
-
-4) Send config frame (cmd 0x04, addr 0x4504)
-   Expect: A5 ... 59 ...
-
-5) Send setup frame (cmd 0x03)
-   Expect: A5 ... 59 ...
-
-6) Send image chunks (cmd 0x57, ~1004-byte payload chunks)
-   Expect: A5 EE ... 04 ... (data ack)
-
-7) Send completion frame (cmd 0x06, payload "Over")
-   Expect: 00 (or model-specific completion)
-```
-
-## A5 Frame Layout
+## Upload Sequence
 
 ```text
-A5 | CMD | ADDR_H | ADDR_L | LEN_H | LEN_L | PAYLOAD... | CHECKSUM(2B)
+1) Handshake: PROGRAMBFNORMALU -> expect 0x06
+2) Enter logo mode: 'D' (0x44)
+3) Init frame: CMD 0x02 payload "PROGRAM"
+4) Config frame: CMD 0x04 addr 0x4504 payload 00 00 0C 00 00 01
+5) Setup frame: CMD 0x03 addr 0x0000 payload 00 00 0C 00
+6) Data frames: CMD 0x57 len 0x0400 (40 frames for 40960-byte image)
+7) Completion: CMD 0x06 payload "Over"
 ```
 
-Fields are represented in captured traffic as command/address/length followed by payload and trailing checksum bytes.
-
-## Captured Example Frames
-
-Handshake:
+## Frame Format
 
 ```text
-TX: 50 52 4F 47 52 41 4D 42 46 4E 4F 52 4D 41 4C 55
-RX: 06
-TX: 44
+A5 | CMD | ADDR_H | ADDR_L | LEN_H | LEN_L | PAYLOAD... | CRC16_XMODEM (2 bytes, big-endian)
 ```
 
-Init (`0x02`):
+## Image Payload
 
-```text
-TX: A5 02 00 00 00 07 50 52 4F 47 52 41 4D 0C AB
-RX: A5 02 00 00 00 01 59 73 AD
+- resolution: `160 x 128`
+- bytes per pixel: `2`
+- total bytes: `40960`
+- pixel packing in implementation:
+  - BGR565 in 16-bit word (`BBBBBGGGGGGRRRRR`)
+  - serialized little-endian (`low byte`, then `high byte`)
+
+## Debug Artifacts
+
+Use CLI debug mode to export exact bytes sent:
+
+```bash
+baofeng-logo-flasher upload-logo-serial \
+  --port /dev/cu.Plser \
+  --in mylogo.png \
+  --model UV-5RM \
+  --write --confirm WRITE \
+  --debug-bytes --debug-dir out/logo_debug
 ```
 
-Config (`0x04`, addr `0x4504`):
+Expected artifacts:
+- `image_payload.bin`
+- `write_payload_stream.bin`
+- `write_frames.bin`
+- `preview_row_major.png`
+- `manifest.json`
 
-```text
-TX: A5 04 45 04 00 06 00 00 0C 00 00 01 83 F4
-RX: A5 04 45 04 00 01 59 06 82
-```
+## Caveat on External Captures
 
-Setup (`0x03`):
-
-```text
-TX: A5 03 00 00 00 04 00 00 0C 00 E1 2F
-RX: A5 03 00 00 00 01 59 36 0D
-```
-
-Data (`0x57`) and ACK (`0xEE`):
-
-```text
-TX: A5 57 [addr_hi] [addr_lo] 04 00 [payload...] [chk...]
-RX: A5 EE 00 00 00 01 04 78 2E
-```
-
-Completion (`0x06`):
-
-```text
-TX: A5 06 00 00 00 04 4F 76 65 72 A9 5E
-RX: 00
-```
-
-## Image Format Constraints
-
-- Resolution: `160x128`
-- Pixel format: `RGB565`
-- Byte order: little-endian per pixel
-- Raw payload size: `160 * 128 * 2 = 40,960 bytes`
-
-## Address Notes
-
-Observed addresses in traffic:
-- `0x0000`: image data base
-- `0x4504`: config/metadata frame target
-
-These values are from capture-based behavior and may vary by firmware.
-
-## Checksum Notes
-
-Frame checksums are present as trailing bytes in captures. Exact algorithm details can vary by implementation path and should be confirmed in code/tests for any new model integration.
-
-## Read Path Note
-
-Some toolchains use a read mode (`'R'`) variant, but practical read support is model/firmware dependent and should be treated separately from upload support.
-
-## Practical Guidance
-
-1. Treat protocol support as model + firmware specific.
-2. Test in simulation/dry-run flow first.
-3. Keep write-gating enabled (`--write` + `WRITE` confirmation).
-4. Use `capabilities` and model config commands before attempting direct upload.
+Do not assume third-party pcaps are complete unless they include handshake, control, data, and completion continuity for a full session.
