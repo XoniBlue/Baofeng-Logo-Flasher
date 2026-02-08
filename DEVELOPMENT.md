@@ -37,7 +37,7 @@ File:
 
 Responsibilities:
 - `SERIAL_FLASH_CONFIGS`
-- route between legacy/clone path and A5 path
+- route between legacy and A5 serial paths
 - model-specific write addressing behavior
 
 Critical behavior:
@@ -55,17 +55,13 @@ Responsibilities:
 - write permission contract
 - simulation behavior
 
-### Image and Patch Utilities
+### Image Utilities
 
 Files:
 - `src/baofeng_logo_flasher/logo_codec.py`
-- `src/baofeng_logo_flasher/logo_patcher.py`
-- `src/baofeng_logo_flasher/bitmap_scanner.py`
 
 Responsibilities:
-- clone bitmap format handling
-- offline patching
-- candidate bitmap discovery
+- image conversion/packing helpers
 
 ### Model Registry
 
@@ -84,9 +80,9 @@ Responsibilities:
 - shared action: `core.actions.flash_logo_serial`
 - protocol implementation: `protocol.logo_protocol`
 
-### Clone Patch Path
+### Legacy Clone Path
 
-- commands: `patch-logo`, `flash-logo`, `upload-logo`, `download-logo`
+- commands: `upload-logo`, `download-logo`
 - protocol modules: `uv5rm_protocol`, `uv5rm_transport`
 
 ## Safety Contract

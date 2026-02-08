@@ -89,18 +89,10 @@ Write operations require both:
 - `--write`
 - confirmation token `WRITE`
 
-## 8. Offline clone patch errors
+## 8. Backup/read-back expectations for A5 models
 
-Use accepted value formats:
-- offset: `4096`, `0x1000`, `1000h`
-- format: `row_msb`, `row_lsb`, `page_msb`, `page_lsb`
-- size: `WxH` such as `128x64`
-
-If logo region is unknown:
-
-```bash
-baofeng-logo-flasher scan-bitmaps clone.img
-```
+For UV-5RM/UV-17 A5 models, direct logo read-back is not implemented in this repo.
+Use backup options provided by your workflow before writing.
 
 ## 9. Run tests
 

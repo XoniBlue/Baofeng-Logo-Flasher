@@ -302,7 +302,7 @@ def _init_registry() -> None:
         logo_regions=[],  # Requires discovery
         notes=[
             "Logo region not yet mapped",
-            "Use scan-bitmaps command to discover logo location",
+            "Logo location is firmware-specific and currently unmapped",
         ],
     ))
 
@@ -601,7 +601,7 @@ def get_capabilities(
         caps.append(CapabilityInfo(
             Capability.READ_LOGO,
             False,
-            "Logo region not mapped - use scan-bitmaps to discover",
+            "Logo region not mapped",
             SafetyLevel.SAFE,
         ))
 

@@ -69,7 +69,7 @@ WARNING_REMEDIATIONS: Dict[WarningCode, str] = {
     WarningCode.W_REGION_READ_ONLY:
         "This memory region cannot be written. Boot logo may be in external flash.",
     WarningCode.W_OFFSET_GUESSED:
-        "Offset was auto-detected. Verify with scan-logo before writing.",
+        "Offset was auto-detected. Validate with your model profile before writing.",
     WarningCode.W_BACKUP_FAILED:
         "Ensure write permissions in backup directory. Do not proceed without backup.",
     WarningCode.W_VERIFY_MISMATCH:

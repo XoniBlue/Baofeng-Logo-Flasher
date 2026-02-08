@@ -1,13 +1,10 @@
-"""Test suite for logo codec and patcher."""
+"""Test suite for logo codec."""
 
-import tempfile
-from pathlib import Path
 from PIL import Image
 
 import pytest
 
 from baofeng_logo_flasher.logo_codec import LogoCodec, BitmapFormat
-from baofeng_logo_flasher.logo_patcher import LogoPatcher
 
 
 class TestLogoCodec:
@@ -133,100 +130,6 @@ class TestLogoCodec:
         mono = codec.to_monochrome(img)
         assert mono.mode == '1'
         assert mono.size == (128, 64)
-
-
-class TestLogoPatcher:
-    """Tests for logo patching."""
-
-    @pytest.fixture
-    def temp_image(self):
-        """Create temporary test image file."""
-        with tempfile.NamedTemporaryFile(suffix='.img', delete=False) as f:
-            # Create a 64KB test image
-            f.write(b'\xFF' * 65536)
-            temp_path = f.name
-
-        yield temp_path
-
-        # Cleanup
-        Path(temp_path).unlink(missing_ok=True)
-
-    def test_backup_region(self, temp_image):
-        """Test backing up image region."""
-        patcher = LogoPatcher()
-
-        backup_info = patcher.backup_region(temp_image, 0x1000, 256)
-
-        assert backup_info['offset'] == 0x1000
-        assert backup_info['length'] == 256
-        assert 'hash' in backup_info
-        assert 'data' in backup_info
-        assert len(backup_info['data']) == 256
-
-    def test_patch_image(self, temp_image):
-        """Test patching image."""
-        patcher = LogoPatcher()
-
-        # Create logo data to patch
-        logo_data = b'\x42' * 256
-
-        result = patcher.patch_image(temp_image, 0x1000, logo_data)
-
-        assert result['offset'] == 0x1000
-        assert result['length'] == 256
-        assert result['verified'] == True
-
-        # Verify patch was written
-        with open(temp_image, 'rb') as f:
-            f.seek(0x1000)
-            readback = f.read(256)
-            assert readback == logo_data
-
-    def test_restore_region(self, temp_image):
-        """Test restoring backed-up region."""
-        patcher = LogoPatcher()
-
-        # Backup original
-        backup_info = patcher.backup_region(temp_image, 0x1000, 256)
-        original_data = backup_info['data']
-
-        # Patch with different data
-        new_data = b'\x42' * 256
-        patcher.patch_image(temp_image, 0x1000, new_data, verify=True)
-
-        # Verify patch
-        with open(temp_image, 'rb') as f:
-            f.seek(0x1000)
-            readback = f.read(256)
-            assert readback == new_data
-
-        # Restore
-        patcher.restore_region(temp_image, backup_info)
-
-        # Verify restore
-        with open(temp_image, 'rb') as f:
-            f.seek(0x1000)
-            readback = f.read(256)
-            assert readback == original_data
-
-    def test_bounds_checking(self, temp_image):
-        """Test that patcher checks bounds."""
-        patcher = LogoPatcher()
-
-        # Try to write past end of file
-        with pytest.raises(ValueError):
-            patcher.patch_image(temp_image, 65000, b'x' * 1024)
-
-    def test_backup_creates_files(self, temp_image):
-        """Test that backups are saved to disk."""
-        patcher = LogoPatcher()
-
-        backup_info = patcher.backup_region(temp_image, 0x1000, 256)
-        backup_path = Path(backup_info['path'])
-
-        assert backup_path.exists()
-        assert backup_path.stat().st_size == 256
-
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

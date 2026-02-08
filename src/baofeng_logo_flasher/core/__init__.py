@@ -26,10 +26,7 @@ from .messages import (
 from .actions import (
     prepare_logo_bytes,
     read_clone,
-    verify_clone,
     write_logo,
-    flash_logo,
-    patch_logo_offline,
     flash_logo_serial,
 )
 
@@ -53,9 +50,6 @@ __all__ = [
     # Actions
     "prepare_logo_bytes",
     "read_clone",
-    "verify_clone",
     "write_logo",
-    "flash_logo",
-    "patch_logo_offline",
     "flash_logo_serial",
 ]

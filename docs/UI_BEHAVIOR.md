@@ -1,6 +1,6 @@
 # UI Behavior and Safety
 
-This document describes current Streamlit behavior for flashing, safety, and diagnostics.
+This document describes current Streamlit behavior for flashing and safety.
 
 ## Entry Point
 
@@ -13,17 +13,14 @@ This document describes current Streamlit behavior for flashing, safety, and dia
 
 - `Boot Logo Flasher`
 - `Capabilities`
-- `Tools & Inspect`
-- `Verify & Patch`
 
 ## Boot Logo Flasher Flow
 
-1. Select model and serial port
-2. Upload image and preprocess (fit/fill/crop)
-3. Convert processed image to BMP bytes
-4. Confirm write safety
-5. Execute `core.actions.flash_logo_serial`
-6. Show progress, result, warnings, logs
+1. Step 1: connection detection (model/port controls + live status)
+2. Step 2: upload and auto-convert image to model BMP size
+3. Step 3: select simulation/write mode and optional debug bytes
+4. Execute `core.actions.flash_logo_serial`
+5. Show progress, result, warnings, logs
 
 ## Address Mode Behavior
 
@@ -37,11 +34,9 @@ This is required to avoid the top-line-only/gray-screen failure.
 
 Write is allowed only when:
 - write mode is enabled
-- user confirmation is provided
 - operation is not in simulation mode
 
 Enforced by:
-- UI components in `ui/components.py`
 - `core/safety.py` (`require_write_permission`)
 
 ## Simulation Mode

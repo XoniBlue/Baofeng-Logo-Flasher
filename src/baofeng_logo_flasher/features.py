@@ -128,7 +128,7 @@ def get_features_by_risk(risk_level: RiskLevel) -> List[Feature]:
 register_feature(Feature(
     id="flash_logo",
     name="Flash Logo",
-    description="Complete workflow: download clone → backup → patch logo → upload → verify",
+    description="Direct serial boot-logo flashing workflow",
     category=FeatureCategory.FLASH,
     risk_level=RiskLevel.HIGH,
     icon="⚡",
@@ -171,7 +171,7 @@ register_feature(Feature(
     category=FeatureCategory.READ,
     risk_level=RiskLevel.NONE,
     icon="⬇️",
-    ui_tab="Tools & Inspect",
+    supports_ui=False,
     requires_connection=True,
     tags=["read", "clone", "backup"],
 ))
@@ -200,50 +200,6 @@ register_feature(Feature(
 
 # Tools
 register_feature(Feature(
-    id="patch_logo",
-    name="Patch Logo (Offline)",
-    description="Patch logo into clone image file without radio connection",
-    category=FeatureCategory.TOOLS,
-    risk_level=RiskLevel.LOW,
-    icon="🖌️",
-    ui_tab="Verify & Patch",
-    tags=["patch", "offline", "logo"],
-))
-
-register_feature(Feature(
-    id="scan_logo",
-    name="Scan for Logos",
-    description="Scan clone image for candidate logo bitmap regions",
-    category=FeatureCategory.TOOLS,
-    risk_level=RiskLevel.NONE,
-    icon="🔍",
-    ui_tab="Tools & Inspect",
-    tags=["scan", "discover", "logo"],
-))
-
-register_feature(Feature(
-    id="inspect_img",
-    name="Inspect Image",
-    description="Inspect CHIRP clone image for structure and safety",
-    category=FeatureCategory.TOOLS,
-    risk_level=RiskLevel.NONE,
-    icon="🔎",
-    ui_tab="Tools & Inspect",
-    tags=["inspect", "analyze"],
-))
-
-register_feature(Feature(
-    id="convert_image",
-    name="Convert Image",
-    description="Convert any image to radio-compatible BMP format",
-    category=FeatureCategory.TOOLS,
-    risk_level=RiskLevel.NONE,
-    icon="🖼️",
-    ui_tab="Tools & Inspect",
-    tags=["convert", "image", "bmp"],
-))
-
-register_feature(Feature(
     id="list_ports",
     name="List Ports",
     description="List available serial ports",
@@ -267,17 +223,6 @@ register_feature(Feature(
 ))
 
 # Verification
-register_feature(Feature(
-    id="verify_image",
-    name="Verify Image",
-    description="Verify clone image against protocol assumptions",
-    category=FeatureCategory.VERIFY,
-    risk_level=RiskLevel.NONE,
-    icon="✓",
-    ui_tab="Verify & Patch",
-    tags=["verify", "safety"],
-))
-
 register_feature(Feature(
     id="detect",
     name="Detect Radio",

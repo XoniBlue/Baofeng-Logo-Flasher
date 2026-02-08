@@ -10,6 +10,8 @@ NOTE: This module requires the optional 'ui' extra to be installed:
 import logging
 import sys
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -30,9 +32,6 @@ except ImportError as e:
     sys.exit(1)
 
 from baofeng_logo_flasher.logo_codec import LogoCodec, BitmapFormat
-from baofeng_logo_flasher.logo_patcher import LogoPatcher
-from baofeng_logo_flasher.protocol_verifier import ProtocolVerifier
-from baofeng_logo_flasher.bitmap_scanner import scan_bytes, save_candidates
 from baofeng_logo_flasher.boot_logo import (
     SERIAL_FLASH_CONFIGS,
     convert_bmp_to_raw,
@@ -45,11 +44,8 @@ from baofeng_logo_flasher.boot_logo import (
 
 # Import from core module for unified safety and parsing
 from baofeng_logo_flasher.core.safety import (
-    SafetyContext,
-    require_write_permission,
     WritePermissionError,
     create_streamlit_safety_context,
-    CONFIRMATION_TOKEN,
 )
 from baofeng_logo_flasher.core.results import OperationResult
 from baofeng_logo_flasher.core.messages import (
@@ -71,19 +67,16 @@ from baofeng_logo_flasher.models import (
 
 # Import UI components
 from baofeng_logo_flasher.ui.components import (
-    render_safety_panel,
     render_warning_list,
-    render_operation_preview,
-    render_mode_switch,
-    render_write_confirmation,
-    render_status_success,
     render_status_error,
     render_raw_logs,
     init_write_mode_state,
-    is_write_enabled,
 )
 
 logger = logging.getLogger(__name__)
+
+BOOT_IMAGE_MAX_UPLOAD_MB = 10
+BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
 
 
 def _init_session_state():
@@ -94,6 +87,20 @@ def _init_session_state():
         st.session_state.selected_port = None
     if "simulate_mode" not in st.session_state:
         st.session_state.simulate_mode = True
+    if "auto_probe_radio" not in st.session_state:
+        st.session_state.auto_probe_radio = True
+    if "connection_probe" not in st.session_state:
+        st.session_state.connection_probe = {}
+    if "connection_poll_meta" not in st.session_state:
+        st.session_state.connection_poll_meta = {"last_probe_ts": 0.0, "interval_sec": 4.0}
+    if "connection_freeze_polling" not in st.session_state:
+        st.session_state.connection_freeze_polling = False
+    if "connection_freeze_target" not in st.session_state:
+        st.session_state.connection_freeze_target = {"model": None, "port": None}
+    if "connection_show_controls" not in st.session_state:
+        st.session_state.connection_show_controls = False
+    if "connection_last_ready" not in st.session_state:
+        st.session_state.connection_last_ready = None
     # Initialize write mode state from UI components
     init_write_mode_state()
 
@@ -101,36 +108,195 @@ def _init_session_state():
 def main():
     """Streamlit app main."""
     st.set_page_config(
-        page_title="Baofeng Logo Flasher",
-        page_icon="🔧",
+        page_title="Baofeng UV Logo Flasher",
+        page_icon="📡",
         layout="wide",
     )
 
     _init_session_state()
 
-    # Header
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.title("🔧 Baofeng Logo Flasher")
-    with col2:
-        st.markdown("[![GitHub](https://img.shields.io/badge/GitHub-LogoFlasher-blue)](https://github.com)")
-
     st.markdown(
         """
-        **Safe, fast boot logo flashing for Baofeng UV-5RM & compatible radios.**
-        Direct serial protocol with encryption support. Simulation mode for testing.
+        <style>
+        /* Global shell */
+        .stApp {
+            background:
+                radial-gradient(1200px 620px at 12% -10%, rgba(25, 52, 112, 0.18), rgba(0, 0, 0, 0) 45%),
+                radial-gradient(900px 520px at 98% -5%, rgba(16, 90, 72, 0.15), rgba(0, 0, 0, 0) 40%),
+                linear-gradient(180deg, #020913 0%, #050d19 100%);
+        }
+        [data-testid="stAppViewContainer"] > .main > div {
+            padding-top: 1.35rem;
+        }
+        section.main > div.block-container {
+            max-width: 1180px;
+            padding-top: 0.3rem;
+            padding-bottom: 1.5rem;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4 {
+            letter-spacing: 0.01em;
+        }
+        h2, h3 {
+            font-weight: 700;
+        }
+        p, label, .stMarkdown, .stCaption {
+            line-height: 1.35;
+        }
+
+        /* Hero */
+        .hero-wrap {
+            margin: 0.25rem auto 0.9rem auto;
+            max-width: 980px;
+            text-align: center;
+            padding: 1.1rem 1.2rem;
+            border-radius: 14px;
+            background: linear-gradient(120deg, rgba(20,32,58,0.62), rgba(14,46,40,0.48));
+            border: 1px solid rgba(255,255,255,0.10);
+        }
+        .hero-title {
+            margin: 0;
+            font-size: clamp(1.85rem, 3.6vw, 3rem);
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            line-height: 1.15;
+        }
+        .hero-sub {
+            margin-top: 0.4rem;
+            opacity: 0.86;
+            font-size: 1rem;
+        }
+        .hero-sub a {
+            color: #7db7ff;
+            text-decoration: none;
+        }
+        .hero-sub a:hover { text-decoration: underline; }
+        .hero-repo {
+            margin-top: 0.5rem;
+        }
+
+        /* Tabs */
+        [data-testid="stTabs"] button[role="tab"] {
+            border-radius: 10px 10px 0 0;
+            padding: 0.55rem 0.9rem;
+            margin-right: 0.25rem;
+            background: rgba(255,255,255,0.02);
+        }
+        [data-testid="stTabs"] button[aria-selected="true"] {
+            background: rgba(19, 120, 89, 0.16);
+            border-bottom: 2px solid rgba(70, 231, 165, 0.6);
+        }
+
+        /* Cards/expanders/forms */
+        [data-testid="stExpander"] {
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.10);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+        }
+        [data-testid="stForm"] {
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.10);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+            padding: 0.7rem 0.8rem;
+        }
+
+        /* Inputs */
+        [data-testid="stSelectbox"] > div,
+        [data-testid="stTextInput"] > div,
+        [data-testid="stFileUploader"] > div {
+            border-radius: 10px;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            border: 1px dashed rgba(120, 173, 255, 0.35);
+            border-radius: 12px;
+            background: rgba(40, 66, 120, 0.10);
+        }
+
+        /* Buttons */
+        .stButton > button,
+        .stDownloadButton > button {
+            border-radius: 10px;
+        }
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(180deg, #1ba579 0%, #178b67 100%);
+            border: 1px solid rgba(120,255,208,0.35);
+        }
+
+        /* Alerts */
+        [data-testid="stAlert"] {
+            border-radius: 12px;
+        }
+
+        /* Connection status chip tooltip */
+        .conn-chip {
+            position: relative;
+        }
+        .conn-chip-info {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            margin-left: 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.38);
+            color: rgba(255,255,255,0.90);
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1;
+            cursor: default;
+            vertical-align: middle;
+        }
+        .conn-chip-tip {
+            position: absolute;
+            left: 12px;
+            top: calc(100% + 9px);
+            z-index: 20;
+            min-width: 260px;
+            max-width: 360px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.18);
+            background: rgba(9, 16, 28, 0.97);
+            color: #e6eef8;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+            opacity: 0;
+            transform: translateY(-4px);
+            pointer-events: none;
+            transition: opacity 120ms ease, transform 120ms ease;
+            white-space: normal;
+            font-weight: 500;
+            font-size: 0.9rem;
+            line-height: 1.35;
+        }
+        .conn-chip-info:hover .conn-chip-tip {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
         """
+        <div class="hero-wrap">
+            <h1 class="hero-title">📡 Baofeng UV Logo Flasher</h1>
+            <div class="hero-sub">Fast boot-logo flashing for UV-5RM and UV-17-family radios</div>
+            <div class="hero-repo">
+                <a href="https://github.com/XoniBlue/Baofeng-Logo-Flasher" target="_blank">
+                    <img alt="GitHub XoniBlue/Baofeng-Logo-Flasher" src="https://img.shields.io/badge/GitHub-XoniBlue%2FBaofeng--Logo--Flasher-3b82f6"/>
+                </a>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # Global safety panel (collapsible)
-    render_safety_panel()
-
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2 = st.tabs([
         "⚡ Boot Logo Flasher",
         "📋 Capabilities",
-        "🔧 Tools & Inspect",
-        "✓ Verify & Patch"
     ])
 
     with tab1:
@@ -138,13 +304,6 @@ def main():
 
     with tab2:
         tab_capabilities()
-
-    with tab3:
-        tab_tools_and_inspect()
-
-    with tab4:
-        tab_verify_and_patch()
-
 
 def launch() -> None:
     """Launch the Streamlit app without requiring a manual CLI command."""
@@ -249,7 +408,7 @@ def tab_capabilities():
     else:
         st.info(
             "📍 **Logo region not mapped for this model.** "
-            "Use the 'Tools & Inspect' tab to scan for bitmap regions in a clone image."
+            "Logo offsets are model/firmware specific and may require external analysis."
         )
 
     # Notes
@@ -359,330 +518,444 @@ def _process_image_for_radio(
         return background
 
 
+def _image_to_bmp_bytes(img: Image.Image) -> bytes:
+    """Convert a PIL image to BMP bytes."""
+    import io
+
+    buf = io.BytesIO()
+    img.save(buf, format="BMP")
+    return buf.getvalue()
+
+
+def _last_flash_backup_path(model: str) -> Path:
+    """Return path for last flashed logo backup file for a model."""
+    safe_model = model.replace(" ", "_").replace("/", "_").lower()
+    return Path("backups") / "last_flash" / f"{safe_model}.bmp"
+
+
+def _save_last_flash_backup(model: str, bmp_bytes: bytes) -> Path:
+    """Persist last successful flashed BMP for user recovery/download."""
+    out_path = _last_flash_backup_path(model)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(bmp_bytes)
+    meta_path = out_path.with_suffix(".json")
+    meta_path.write_text(
+        (
+            "{\n"
+            f'  "model": "{model}",\n'
+            f'  "saved_at": "{datetime.utcnow().isoformat()}Z",\n'
+            f'  "bytes": {len(bmp_bytes)}\n'
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    return out_path
+
+
+def _probe_connection_status(port: str, model: str, config: dict, force: bool = False) -> dict:
+    """Probe radio availability and cache short-lived status in session state."""
+    now = time.time()
+    cache = st.session_state.connection_probe
+    same_target = cache.get("port") == port and cache.get("model") == model
+    fresh = now - float(cache.get("ts", 0)) < 5.0
+    if not force and same_target and fresh:
+        return cache
+
+    protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
+    try:
+        radio_id = read_radio_id(
+            port,
+            magic=config.get("magic"),
+            baudrate=int(config.get("baudrate", 115200)),
+            timeout=min(float(config.get("timeout", 2.0)), 1.5),
+            protocol=protocol,
+        )
+        cache = {
+            "port": port,
+            "model": model,
+            "ts": now,
+            "ok": True,
+            "radio_id": radio_id,
+            "error": "",
+        }
+    except Exception as exc:
+        cache = {
+            "port": port,
+            "model": model,
+            "ts": now,
+            "ok": False,
+            "radio_id": "",
+            "error": str(exc),
+        }
+
+    st.session_state.connection_probe = cache
+    return cache
+
+
+def _connection_light(ports: list[str], port: str, probe: dict) -> tuple[str, str]:
+    """Return a unified connection indicator icon + label."""
+    port_detected = bool(port and ((not ports) or (port in ports)))
+    radio_ok = bool(probe.get("ok"))
+    if port_detected and radio_ok:
+        return "🟢", "Ready to flash (auto-detected)"
+    if port_detected:
+        return "🟡", "Port found, radio not discovered"
+    return "🔴", "Not connected"
+
+
+def _status_chip(
+    icon: str,
+    label: str,
+    detail: str,
+    tone: str,
+    tooltip_rows: Optional[list[str]] = None,
+) -> None:
+    """Render a compact status chip row."""
+    palette = {
+        "good": ("#0f3d2e", "#67e8a5"),
+        "warn": ("#4a3a0f", "#facc15"),
+        "bad": ("#4a1111", "#fca5a5"),
+    }
+    bg, fg = palette.get(tone, palette["warn"])
+    detail_html = f"<span style='opacity:0.9;font-weight:400;'> · {detail}</span>" if detail else ""
+    tooltip_html = ""
+    if tooltip_rows:
+        rows = "<br/>".join(tooltip_rows)
+        tooltip_html = (
+            "<span class='conn-chip-info' aria-label='Connection details'>i"
+            f"<span class='conn-chip-tip'>{rows}</span>"
+            "</span>"
+        )
+    st.markdown(
+        (
+            f"<div class='conn-chip' style='padding:10px 14px;border-radius:12px;background:{bg};"
+            f"border:1px solid rgba(255,255,255,0.12);color:{fg};font-weight:600;'>"
+            f"{icon} {label}{detail_html}{tooltip_html}</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _step3_mode_badge(model: str, payload_bytes: int, addr_mode: str, write_mode: bool, debug_mode: bool) -> None:
+    """Render a unified Step 3 status badge."""
+    if write_mode:
+        bg = "rgba(123, 34, 34, 0.24)"
+        fg = "#fca5a5"
+        border = "rgba(248, 113, 113, 0.36)"
+        mode_label = "LIVE WRITE"
+    else:
+        bg = "rgba(24, 58, 112, 0.22)"
+        fg = "#93c5fd"
+        border = "rgba(96, 165, 250, 0.32)"
+        mode_label = "SIMULATION"
+
+    debug_label = " · DEBUG ON" if debug_mode else ""
+    meta = f"{model} · {payload_bytes:,} bytes · {addr_mode}"
+    st.markdown(
+        (
+            f"<div style='padding-top:0.62rem;text-align:right;'>"
+            f"<span style='display:inline-block;padding:8px 12px;border-radius:10px;"
+            f"background:{bg};border:1px solid {border};color:{fg};font-weight:700;'>"
+            f"{mode_label}{debug_label}"
+            f"<span style='opacity:0.82;font-weight:500;'> · {meta}</span>"
+            f"</span></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+@st.fragment(run_every="2s")
+def _render_connection_health(model: str, config: dict, port: str, ports: list[str]) -> dict:
+    """
+    Unified live connection status with adaptive polling.
+
+    Poll cadence:
+    - 4s while disconnected/not discovered
+    - 12s when fully connected and discovered
+    """
+    probe = st.session_state.connection_probe
+
+    freeze_target = st.session_state.connection_freeze_target
+    target_changed = freeze_target.get("model") != model or freeze_target.get("port") != port
+    if target_changed:
+        st.session_state.connection_freeze_polling = False
+        st.session_state.connection_freeze_target = {"model": model, "port": port}
+
+    now = time.time()
+    last_probe = float(st.session_state.connection_poll_meta.get("last_probe_ts", 0.0))
+    interval = float(st.session_state.connection_poll_meta.get("interval_sec", 4.0))
+
+    if probe.get("ok") and port and ((not ports) or (port in ports)):
+        interval = 12.0
+    else:
+        interval = 4.0
+    st.session_state.connection_poll_meta["interval_sec"] = interval
+
+    should_probe = (
+        not st.session_state.connection_freeze_polling
+        and port
+        and ((not ports) or (port in ports))
+        and (now - last_probe >= interval)
+    )
+    if should_probe:
+        probe = _probe_connection_status(port, model, config, force=True)
+        st.session_state.connection_poll_meta["last_probe_ts"] = now
+    elif not port:
+        probe = {"ok": False, "radio_id": "", "error": "No port selected"}
+    elif ports and port not in ports:
+        probe = {"ok": False, "radio_id": "", "error": "Selected port is not currently detected"}
+
+    icon, label = _connection_light(ports, port, probe)
+    port_detail = port if port else "port not set"
+    if probe.get("ok"):
+        auto_detected_summary = (
+            f"Auto-detected and verified on <strong>{port_detail}</strong> "
+            f"with radio <strong>{probe.get('radio_id', 'UNKNOWN')}</strong> "
+            f"(profile <strong>{model}</strong>)."
+        )
+        _status_chip(
+            icon,
+            label,
+            "",
+            "good",
+            tooltip_rows=[
+                auto_detected_summary,
+            ],
+        )
+        st.session_state.connection_freeze_polling = True
+    elif port and ((not ports) or (port in ports)):
+        _status_chip(icon, label, f"{port_detail} · awaiting radio", "warn")
+    else:
+        _status_chip(icon, label, port_detail, "bad")
+    if probe.get("error") and not probe.get("ok"):
+        st.caption(f"Last probe: {probe['error']}")
+
+    ready_now = bool(probe.get("ok") and port and ((not ports) or (port in ports)))
+    last_ready = st.session_state.connection_last_ready
+    if last_ready is None:
+        st.session_state.connection_last_ready = ready_now
+        desired_show_controls = not ready_now
+        if st.session_state.connection_show_controls != desired_show_controls:
+            st.session_state.connection_show_controls = desired_show_controls
+            st.rerun()
+    elif bool(last_ready) != ready_now:
+        st.session_state.connection_last_ready = ready_now
+        st.session_state.connection_show_controls = not ready_now
+        st.rerun()
+
+    return probe
+
+
 def tab_boot_logo_flasher():
     """Boot logo flashing via serial connection."""
+    if "processed_bmp" not in st.session_state:
+        st.session_state.processed_bmp = None
+    ports = list_serial_ports()
 
-    st.markdown("### Flash Custom Boot Logo")
-    st.markdown(
-        "Connect your UV-5RM to a USB cable and flash a custom boot logo directly. "
-        "Works via reverse-engineered serial protocol with XOR encryption."
-    )
+    bmp_bytes = st.session_state.processed_bmp
+    top_left, top_right = st.columns([1, 1])
 
-    # Risk banner
-    st.error(
-        """
-        ⚠️ **FLASHING RISK**: If the connection drops during write, your radio may become **unresponsive**.
-
-        **Before flashing:**
-        - ✓ Fully charge the radio (USB power recommended)
-        - ✓ Use a short, quality USB cable
-        - ✓ Close other serial apps (CHIRP, Arduino IDE, etc.)
-        - ✓ Have a backup radio or cable on hand
-
-        **Recommended:** Test with **Simulation Mode** first!
-        """,
-        icon="🚨"
-    )
-
-    # Hardware architecture notice for UV-5RM
-    st.info(
-        """
-        **📡 UV-5RM Hardware Info** (from [reverse engineering](https://github.com/amoxu/Baofeng-UV-5RM-5RH-RE)):
-
-        | Component | Details |
-        |-----------|---------|
-        | MCU | AT32F421C8T7 (64KB flash, 16KB RAM) |
-        | External Flash | XMC 25QH16CJIG (16Mbit / 2MB SPI) |
-        | RF Chip | BK4819 |
-
-        **Why direct serial flashing may not work:**
-        - Boot logos are stored on the **external SPI flash** (2MB chip)
-        - The clone protocol only accesses **MCU memory** (channel data, settings)
-        - Direct logo modification requires **firmware-level access** to the SPI flash
-
-        **Alternative:** Use the Image Converter tool to prepare your logo, then flash
-        using the official Baofeng software or a modified firmware.
-        """
-    )
-
-    # Two-column layout
-    col_left, col_right = st.columns([1.2, 1])
-
-    # ===== LEFT: Configuration =====
-    with col_left:
-        st.markdown("#### 📡 Configuration")
-
-        # Model selection
-        model = st.selectbox(
-            "Radio Model",
-            list(SERIAL_FLASH_CONFIGS.keys()),
-            index=list(SERIAL_FLASH_CONFIGS.keys()).index(st.session_state.selected_model),
-            key="model_select",
-            help="Select your radio model for correct image size and encryption"
-        )
-        st.session_state.selected_model = model
-        config = dict(SERIAL_FLASH_CONFIGS[model])
-        write_addr_mode = config.get("write_addr_mode", "byte")
-
-        st.caption(f"A5 write address mode: {write_addr_mode}")
-
-        st.divider()
-
-        # Serial port selection
-        st.markdown("**Serial Port**")
-        ports = list_serial_ports()
-
-        if ports:
-            # Show available ports with current selection
-            port_display = {p: p for p in ports}
-            port_display["[Enter manually]"] = "[Enter manually]"
-
-            port_key = ports[0] if ports else "[Enter manually]"
-            if st.session_state.selected_port and st.session_state.selected_port in ports:
-                port_key = st.session_state.selected_port
-
-            cols_port = st.columns([3, 1])
-            with cols_port[0]:
-                selected = st.selectbox(
-                    "Available ports",
-                    options=list(port_display.keys()),
-                    index=list(port_display.keys()).index(port_key) if port_key in port_display else 0,
-                    key="port_select",
-                    label_visibility="collapsed"
-                )
-
-            with cols_port[1]:
-                if st.button("🔄 Refresh", use_container_width=True):
-                    st.rerun()
-
-            if selected == "[Enter manually]":
-                port = st.text_input("Enter port path", value="/dev/ttyUSB0", help="e.g., /dev/ttyUSB0, /dev/cu.SLAB_USBtoUART, COM3")
-            else:
-                port = selected
-        else:
-            st.warning("No USB serial ports detected. Enter manually below.")
-            port = st.text_input("Enter port path", value="/dev/cu.Plser", help="e.g., /dev/cu.Plser")
-
-        st.session_state.selected_port = port
-
-        st.divider()
-
-        # Test connection button
-        test_col1, test_col2 = st.columns(2)
-        with test_col1:
-            if st.button("📋 Read Radio ID", use_container_width=True):
-                try:
-                    with st.spinner("Connecting..."):
-                        radio_id = read_radio_id(port, magic=config["magic"], timeout=3.0)
-                    st.success(f"✓ **Radio ID:** `{radio_id}`")
-                    st.info(f"✓ Connection verified! Ready to flash.")
-                except Exception as exc:
-                    st.error(f"Connection failed: {exc}")
-
-        with test_col2:
-            if st.button("📡 List Ports", use_container_width=True):
-                ports = list_serial_ports()
-                if ports:
-                    st.info(f"**Found {len(ports)} port(s):**\n" + "\n".join(f"- `{p}`" for p in ports))
-                else:
-                    st.warning("No serial ports detected")
-
-        st.divider()
-
-        # Backup logo section
-        st.markdown("#### 💾 Backup Current Logo")
-
-        # Check if this model supports logo backup
-        # UV-5RM stores logo in flash memory which may be write-only
-        is_flash_based = len(config.get("magic", b"")) == 16  # UV17Pro protocol = flash-based
-
-        if is_flash_based:
-            st.warning(
-                "⚠️ **Note:** UV-5RM and similar radios store the boot logo in flash memory "
-                "which may not be readable via the clone protocol. "
-                "If backup fails, consider using CHIRP to save a full radio backup."
+    with top_left:
+        header_cols = st.columns([2.2, 1.2])
+        with header_cols[0]:
+            st.markdown("#### Step 1 · Connection")
+        with header_cols[1]:
+            st.session_state.connection_show_controls = st.toggle(
+                "Show controls",
+                value=st.session_state.connection_show_controls,
+                key="connection_show_controls_toggle",
+                help="Show model/port selectors.",
             )
 
-        backup_col1, backup_col2 = st.columns([3, 1])
+        models = list(SERIAL_FLASH_CONFIGS.keys())
+        selected_model = st.session_state.selected_model if st.session_state.selected_model in models else models[0]
+        st.session_state.selected_model = selected_model
+        if st.session_state.selected_port is None and ports:
+            st.session_state.selected_port = ports[0]
 
-        with backup_col1:
-            st.markdown("Download the current boot logo from your radio for backup before flashing a new one.")
-
-        with backup_col2:
-            backup_simulate = st.checkbox("Simulate", value=True, key="backup_simulate", help="Test without radio")
-
-        if st.button("⬇️ Download Current Logo", use_container_width=True):
-            _do_download_logo(port, config, backup_simulate)
-
-    # ===== RIGHT: Image Preview =====
-    with col_right:
-        st.markdown("#### 🖼️ Boot Logo Image")
-
-        uploaded_file = st.file_uploader(
-            "Upload image",
-            type=["bmp", "png", "jpg", "jpeg", "gif", "webp", "tiff"],
-            key="boot_logo_image",
-            help=f"Any image format accepted. Will be resized to {config['size'][0]}×{config['size'][1]} pixels."
+        model = st.session_state.selected_model
+        port = st.session_state.selected_port or "/dev/cu.Plser"
+        config = dict(SERIAL_FLASH_CONFIGS[model])
+        probe = st.session_state.connection_probe
+        ready_now = bool(
+            probe.get("ok")
+            and probe.get("model") == model
+            and probe.get("port") == port
+            and port
+            and ((not ports) or (port in ports))
         )
 
-        # Track processed image in session state
-        if "processed_bmp" not in st.session_state:
-            st.session_state.processed_bmp = None
+        show_controls = st.session_state.connection_show_controls or not ready_now
+        if show_controls:
+            conn_cols = st.columns(2)
+            with conn_cols[0]:
+                model = st.selectbox(
+                    "Radio Model",
+                    models,
+                    index=models.index(st.session_state.selected_model),
+                    key="model_select",
+                )
+            with conn_cols[1]:
+                if ports:
+                    port_options = list(ports) + ["[Enter manually]"]
+                    default = st.session_state.selected_port if st.session_state.selected_port in ports else port_options[0]
+                    selected = st.selectbox("Serial Port", port_options, index=port_options.index(default), key="port_select")
+                    if selected == "[Enter manually]":
+                        port = st.text_input("Port Path", value=st.session_state.selected_port or "/dev/cu.Plser")
+                    else:
+                        port = selected
+                else:
+                    port = st.text_input("Port Path", value=st.session_state.selected_port or "/dev/cu.Plser")
 
-        bmp_file = None  # Will hold the processed BMP data
+            st.session_state.selected_model = model
+            st.session_state.selected_port = port
+        else:
+            model = st.session_state.selected_model
+            port = st.session_state.selected_port or "/dev/cu.Plser"
 
-        if uploaded_file:
-            try:
-                original_img = Image.open(uploaded_file)
-                expected_size = config["size"]
+        config = dict(SERIAL_FLASH_CONFIGS[model])
+        probe = _render_connection_health(model=model, config=config, port=port, ports=ports)
+        ready_now = bool(probe.get("ok") and port and ((not ports) or (port in ports)))
+        if ready_now:
+            st.session_state.connection_show_controls = False
+        if not ready_now:
+            st.session_state.connection_show_controls = True
+        if show_controls != st.session_state.connection_show_controls:
+            st.rerun()
 
-                # Show original image info
-                st.caption(f"Original: {original_img.size[0]}×{original_img.size[1]} ({original_img.format or 'Unknown'})")
+    with top_right:
+        step2_header_cols = st.columns([2.0, 1.4])
+        with step2_header_cols[0]:
+            st.markdown("#### Step 2 · Logo")
+        with step2_header_cols[1]:
+            logo_action_mode = st.toggle(
+                "Backup mode",
+                value=st.session_state.get("logo_action_backup_mode", False),
+                key="logo_action_backup_mode",
+                help="Off = flash a new logo, On = backup/download current logo",
+            )
+        if not logo_action_mode:
+            uploaded_file = st.file_uploader(
+                "Logo image",
+                type=["bmp", "png", "jpg", "jpeg", "gif", "webp", "tiff"],
+                key="boot_logo_image",
+                label_visibility="collapsed",
+                help=(
+                    f"Auto-converted to {config['size'][0]}×{config['size'][1]} BMP. "
+                    f"Max {BOOT_IMAGE_MAX_UPLOAD_MB} MB."
+                ),
+            )
+            if uploaded_file:
+                try:
+                    file_size = getattr(uploaded_file, "size", None)
+                    if file_size is not None and file_size > BOOT_IMAGE_MAX_UPLOAD_BYTES:
+                        st.error(
+                            f"Image is too large ({file_size / (1024 * 1024):.1f} MB). "
+                            f"Maximum is {BOOT_IMAGE_MAX_UPLOAD_MB} MB."
+                        )
+                        st.session_state.processed_bmp = None
+                        bmp_bytes = None
+                    else:
+                        original_img = Image.open(uploaded_file)
+                        expected_size = config["size"]
+                        st.caption(f"Input: {original_img.size[0]}×{original_img.size[1]} ({original_img.format or 'Unknown'})")
 
-                # Resize options
-                with st.expander("⚙️ Resize Options", expanded=original_img.size != expected_size):
-                    resize_method = st.radio(
-                        "Resize method",
-                        ["Fit (letterbox)", "Fill (stretch)", "Crop (center)"],
-                        index=0,
-                        horizontal=True,
-                        help="How to handle aspect ratio differences"
+                        # Fixed conversion path: auto-convert every upload to target BMP size.
+                        processed_img = _process_image_for_radio(
+                            original_img,
+                            expected_size,
+                            "Fill (stretch)",
+                            "#000000",
+                        )
+                        st.session_state.processed_bmp = _image_to_bmp_bytes(processed_img)
+                        bmp_bytes = st.session_state.processed_bmp
+                        st.success(f"Converted to {expected_size[0]}×{expected_size[1]} BMP and ready to flash.")
+
+                        st.download_button(
+                            "💾 Download Processed BMP",
+                            data=bmp_bytes,
+                            file_name="boot_logo_processed.bmp",
+                            mime="image/bmp",
+                            use_container_width=True,
+                        )
+                except Exception as exc:
+                    st.error(f"Image processing error: {exc}")
+                    bmp_bytes = None
+        else:
+            backup_supported = all(k in config for k in ("start_addr", "magic")) and config.get("protocol") != "a5_logo"
+            if backup_supported:
+                backup_simulate = st.toggle("Simulate backup", value=True, key="backup_simulate")
+                if st.button("⬇️ Download Current Logo", use_container_width=True):
+                    _do_download_logo(port, config, backup_simulate)
+            else:
+                st.info(
+                    "Direct radio logo read-back is not implemented for UV-5RM/UV-17 A5 in this app."
+                )
+                last_backup = _last_flash_backup_path(model)
+                if last_backup.exists():
+                    st.download_button(
+                        "💾 Download Last Flashed Logo",
+                        data=last_backup.read_bytes(),
+                        file_name=f"{model.replace(' ', '_').lower()}_last_flashed.bmp",
+                        mime="image/bmp",
+                        use_container_width=True,
                     )
 
-                    if resize_method == "Fit (letterbox)":
-                        bg_color = st.color_picker("Background color", "#000000", help="Color for letterbox bars")
-                    else:
-                        bg_color = "#000000"
-
-                # Process the image
-                processed_img = _process_image_for_radio(original_img, expected_size, resize_method, bg_color)
-
-                # Show before/after
-                col_before, col_after = st.columns(2)
-                with col_before:
-                    st.image(original_img, caption="Original", use_column_width=True)
-                with col_after:
-                    st.image(processed_img, caption=f"Processed ({expected_size[0]}×{expected_size[1]})", use_column_width=True)
-
-                if processed_img.size == expected_size:
-                    st.success(f"✓ Ready to flash: {expected_size[0]}×{expected_size[1]}")
-
-                # Convert to BMP bytes for flashing
-                import io
-                bmp_buffer = io.BytesIO()
-                processed_img.save(bmp_buffer, format="BMP")
-                bmp_buffer.seek(0)
-                st.session_state.processed_bmp = bmp_buffer.getvalue()
-
-                # Create a file-like object for the flash function
-                class BMPFile:
-                    def __init__(self, data):
-                        self._data = data
-                    def getvalue(self):
-                        return self._data
-                    def read(self):
-                        return self._data
-
-                bmp_file = BMPFile(st.session_state.processed_bmp)
-
-                # Download processed BMP button
-                st.download_button(
-                    "💾 Download Processed BMP",
-                    data=st.session_state.processed_bmp,
-                    file_name="boot_logo_processed.bmp",
-                    mime="image/bmp",
-                    use_container_width=True,
-                )
-
-            except Exception as exc:
-                st.error(f"Image processing error: {exc}")
-                bmp_file = None
-        else:
-            st.info("📤 Upload any image (PNG, JPG, BMP, etc.)")
-
     st.divider()
-
-    # ===== Experimental Warning =====
-    is_flash_based = len(config.get("magic", b"")) == 16  # UV17Pro protocol
-    if is_flash_based:
-        with st.expander("⚠️ UV-5RM Hardware Limitation", expanded=False):
-            st.warning(
-                """
-                Direct serial flashing to UV-5RM **will likely fail** because:
-                - Boot logos are stored on **external 2MB SPI flash** (not MCU memory)
-                - The clone protocol can only access **MCU internal memory**
-                - The radio returns 'R' (0x52) = memory not accessible
-
-                **This is a hardware limitation**, not a bug. The boot logo chip is separate
-                from the memory accessible via the serial programming cable.
-
-                **Your options:**
-                1. Use the **Image Converter** tool to prepare a compatible BMP
-                2. Flash via official Baofeng software (if it supports logo changes)
-                3. Modify firmware to embed your logo (advanced, requires RE work)
-                """
-            )
-
-    # ===== Operation Mode & Safety Panel =====
-    st.markdown("---")
-
-    # Note: Mode switch is rendered in the global safety panel at the top of the page
-    # so we don't duplicate it here
-
-    # Simulation mode option
-    simulate = st.checkbox(
-        "🧪 Simulation Mode",
-        value=st.session_state.simulate_mode,
-        help="Test without writing to radio (safe to try multiple times)"
-    )
-    st.session_state.simulate_mode = simulate
-
-    # Build operation preview details
-    operation_details = {
-        "model": model,
-        "region": f"0x{config.get('start_addr', 0):04X}",
-        "bytes_length": config["size"][0] * config["size"][1] * 3,
-        "operation": "flash_logo_serial",
-        "write_addr_mode": config.get("write_addr_mode", "byte"),
-    }
-
-    debug_bytes = st.checkbox(
-        "🧰 Protocol Debug Bytes",
-        value=False,
-        help="Dump payload/frame artifacts to out/streamlit_logo_debug for verification",
-    )
-
-    # Write confirmation (only if not simulating)
-    if not simulate:
-        write_confirmed = render_write_confirmation(
-            operation_name="flash boot logo",
-            details=operation_details,
+    payload_bytes = config["size"][0] * config["size"][1] * 2
+    row_cols = st.columns([1.45, 1.05, 1.05, 3.5])
+    with row_cols[0]:
+        st.markdown(
+            "<div style='padding-top:0.44rem;font-size:2rem;font-weight:700;line-height:1.15;'>Step 3 · Flash</div>",
+            unsafe_allow_html=True,
         )
-    else:
-        write_confirmed = True  # Simulation doesn't need confirmation
+    with row_cols[1]:
+        st.markdown("<div style='padding-top:0.20rem;'></div>", unsafe_allow_html=True)
+        write_mode_enabled = st.toggle(
+            "Write mode",
+            value=st.session_state.get("step3_write_mode", False),
+            key="step3_write_mode",
+            help="Off = simulation, On = real flash",
+        )
+    with row_cols[2]:
+        st.markdown("<div style='padding-top:0.20rem;'></div>", unsafe_allow_html=True)
+        debug_bytes = st.toggle(
+            "Debug bytes",
+            value=st.session_state.get("step3_debug_bytes", False),
+            key="step3_debug_bytes",
+            help="Dump payload/frame artifacts to out/streamlit_logo_debug.",
+        )
+    with row_cols[3]:
+        _step3_mode_badge(
+            model=model,
+            payload_bytes=payload_bytes,
+            addr_mode=config.get("write_addr_mode", "byte"),
+            write_mode=write_mode_enabled,
+            debug_mode=debug_bytes,
+        )
 
-    st.divider()
+    simulate = not write_mode_enabled
+    write_confirmed = True
 
-    # ===== MAIN Flash Button =====
-    can_flash = bmp_file and port and (simulate or write_confirmed)
-
-    if st.button(
-        "🚀 Connect & Flash Logo" if not simulate else "🧪 Simulate Flash",
-        type="primary",
-        use_container_width=True,
-        disabled=not can_flash,
-        help="Click to begin flashing process"
-    ):
-        if not bmp_file:
+    can_flash = bool((not logo_action_mode) and bmp_bytes and port)
+    with st.form("flash_logo_form", clear_on_submit=False):
+        submitted = st.form_submit_button(
+            "🚀 Connect & Flash Logo" if write_mode_enabled else "🧪 Simulate Flash",
+            type="primary",
+            use_container_width=True,
+            disabled=not can_flash,
+        )
+    if submitted:
+        if not bmp_bytes:
             st.error("❌ Please upload a BMP file")
         elif not port:
             st.error("❌ Please enter a serial port")
-        elif not simulate and not write_confirmed:
-            st.error("❌ Write confirmation required. Complete the confirmation steps above.")
+        elif logo_action_mode:
+            st.error("❌ Backup mode is enabled. Turn off Backup mode to flash.")
         else:
             _do_flash(
                 port,
-                bmp_file,
+                bmp_bytes,
                 config,
                 simulate,
                 write_confirmed,
@@ -693,7 +966,7 @@ def tab_boot_logo_flasher():
 
 def _do_flash(
     port: str,
-    bmp_file,
+    bmp_bytes: bytes,
     config: dict,
     simulate: bool,
     write_confirmed: bool,
@@ -704,7 +977,7 @@ def _do_flash(
     bmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".bmp", delete=False) as tmp:
-            tmp.write(bmp_file.getvalue())
+            tmp.write(bmp_bytes)
             bmp_path = tmp.name
 
         st.markdown("---")
@@ -756,6 +1029,8 @@ def _do_flash(
             st.balloons()
             result_msg = result.metadata.get("result_message", "Flash successful!")
             st.success(f"✅ **Flash successful!**\n{result_msg}")
+            backup_path = _save_last_flash_backup(model, bmp_bytes)
+            st.caption(f"Saved last flashed logo backup: {backup_path}")
             st.info(
                 """
                 **Next steps:**
@@ -768,6 +1043,13 @@ def _do_flash(
 
         if debug_bytes:
             st.caption("Debug artifacts: out/streamlit_logo_debug")
+        summary_cols = st.columns(3)
+        with summary_cols[0]:
+            st.metric("Image Size", f"{config['size'][0]}x{config['size'][1]}")
+        with summary_cols[1]:
+            st.metric("Payload Bytes", f"{config['size'][0] * config['size'][1] * 2:,}")
+        with summary_cols[2]:
+            st.metric("Write Mode", config.get("write_addr_mode", "byte"))
 
         # Show any warnings from the operation
         if result.warnings:
@@ -784,6 +1066,7 @@ def _do_flash(
             st.info(f"Details: Model={e.details.get('model', 'Unknown')}, "
                    f"Region={e.details.get('target_region', 'Unknown')}")
     except Exception as exc:
+        logger.exception("Boot logo flash error")
         error_msg = str(exc)
         st.error(f"❌ **Flash failed:**\n{error_msg}")
 
@@ -808,33 +1091,38 @@ def _do_flash(
 
             st.info(
                 """
-                **Recommended Alternative: Use CHIRP**
+                **Recommended path**
 
-                The most reliable method to change the boot logo on UV-5RM radios:
+                If direct write is unavailable for your specific firmware/build:
 
-                1. **Download clone image** from your radio using CHIRP
-                2. **Use our Image Converter** tool to create a compatible BMP
-                3. **Patch the clone file** using the patch-logo command:
-                   ```
-                   baofeng-logo-flasher patch-logo clone.img logo.bmp --offset 0x5A0
-                   ```
-                4. **Upload patched clone** back to radio via CHIRP
-
-                The correct boot logo offset in your clone file can be discovered using:
-                ```
-                baofeng-logo-flasher scan-bitmaps clone.img
-                ```
+                1. Use Step 2 to prepare a compatible BMP
+                2. Keep Step 3 in simulation mode for dry runs
+                3. Retry with stable cable/power and correct model profile
                 """
             )
     finally:
         if bmp_path:
             Path(bmp_path).unlink(missing_ok=True)
-        logger.exception("Boot logo flash error")
+        # Resume connection polling after an operation completes.
+        st.session_state.connection_freeze_polling = False
+        st.session_state.connection_poll_meta["last_probe_ts"] = 0.0
 
 
 def _do_download_logo(port: str, config: dict, simulate: bool):
     """Execute the download/backup logo operation."""
     try:
+        if config.get("protocol") == "a5_logo":
+            raise ValueError(
+                "Backup logo download is not implemented for A5 serial protocol models in this app."
+            )
+        required = ("start_addr", "magic")
+        missing = [k for k in required if k not in config]
+        if missing:
+            raise ValueError(
+                "Backup logo not supported for this model config "
+                f"(missing: {', '.join(missing)})."
+            )
+
         st.markdown("---")
 
         # Progress tracking
@@ -910,227 +1198,6 @@ def _do_download_logo(port: str, config: dict, simulate: bool):
                 """
             )
         logger.exception("Boot logo download error")
-
-
-# ============================================================================
-# TAB 2: TOOLS & INSPECT
-# ============================================================================
-
-def tab_tools_and_inspect():
-    """Tools and image inspection utilities."""
-
-    st.markdown("### Inspection & Scanning Tools")
-    st.markdown("Analyze images, scan for logo candidates, and troubleshoot.")
-
-    sub_col1, sub_col2 = st.columns(2)
-
-    with sub_col1:
-        st.markdown("#### 🔍 Inspect Clone Image")
-        st.markdown("Analyze file structure and safety metrics")
-
-        img_file = st.file_uploader("Upload .img file", type="img", key="inspect_img")
-        if img_file:
-            data = img_file.getvalue()
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Size", f"{len(data):,} bytes")
-            with col2:
-                import hashlib
-                h = hashlib.sha256(data).hexdigest()
-                st.metric("SHA256", h[:12] + "...")
-            with col3:
-                import math
-                freq = {}
-                for b in data:
-                    freq[b] = freq.get(b, 0) + 1
-                entropy = sum(-(count / len(data)) * math.log2(count / len(data))
-                            for count in freq.values() if count > 0)
-                st.metric("Entropy", f"{entropy:.2f}")
-
-            with st.expander("Raw hex preview"):
-                st.code(data[:256].hex(), language="text")
-
-    with sub_col2:
-        st.markdown("#### 🔎 Scan for Logo Candidates")
-        st.markdown("Find potential logo blocks in an image")
-
-        scan_img = st.file_uploader("Upload .img file", type="img", key="scan_img")
-        max_cand = st.slider("Max candidates", 1, 50, 20)
-        step = st.slider("Scan step (bytes)", 1, 256, 16)
-
-        if st.button("Scan Image", use_container_width=True):
-            if scan_img:
-                with st.spinner("Scanning..."):
-                    candidates = scan_bytes(scan_img.getvalue(), max_candidates=max_cand, step=step)
-
-                if candidates:
-                    st.success(f"Found {len(candidates)} candidates")
-                    cols = st.columns(2)
-                    for idx, cand in enumerate(candidates[:4]):
-                        caption = (f"0x{cand['offset']:05X} | {cand['width']}×{cand['height']} | "
-                                 f"{cand['fill_ratio']*100:.0f}% full")
-                        with cols[idx % 2]:
-                            st.image(cand["image"], caption=caption, use_column_width=True)
-                else:
-                    st.warning("No candidates found")
-
-    # Image Converter Tool
-    st.divider()
-    st.markdown("#### 🖼️ Image Converter")
-    st.markdown("Convert any image to a radio-compatible BMP file.")
-
-    conv_col1, conv_col2 = st.columns(2)
-
-    with conv_col1:
-        # Model selection for size
-        conv_model = st.selectbox(
-            "Target radio model",
-            list(SERIAL_FLASH_CONFIGS.keys()),
-            key="conv_model_select",
-            help="Select radio to determine output dimensions"
-        )
-        conv_config = SERIAL_FLASH_CONFIGS[conv_model]
-        target_size = conv_config["size"]
-        st.caption(f"Output size: {target_size[0]}×{target_size[1]} pixels")
-
-        # Resize options
-        conv_resize = st.radio(
-            "Resize method",
-            ["Fit (letterbox)", "Fill (stretch)", "Crop (center)"],
-            index=0,
-            key="conv_resize",
-            help="How to handle aspect ratio differences"
-        )
-
-        if conv_resize == "Fit (letterbox)":
-            conv_bg = st.color_picker("Background", "#000000", key="conv_bg")
-        else:
-            conv_bg = "#000000"
-
-    with conv_col2:
-        conv_file = st.file_uploader(
-            "Upload image to convert",
-            type=["bmp", "png", "jpg", "jpeg", "gif", "webp", "tiff"],
-            key="conv_image",
-        )
-
-        if conv_file:
-            try:
-                conv_img = Image.open(conv_file)
-                st.caption(f"Input: {conv_img.size[0]}×{conv_img.size[1]} ({conv_img.format or 'Unknown'})")
-
-                # Process
-                processed = _process_image_for_radio(conv_img, target_size, conv_resize, conv_bg)
-
-                # Preview
-                st.image(processed, caption=f"Output: {target_size[0]}×{target_size[1]}", use_column_width=True)
-
-                # Convert to BMP bytes
-                import io
-                conv_buffer = io.BytesIO()
-                processed.save(conv_buffer, format="BMP")
-                conv_bytes = conv_buffer.getvalue()
-
-                # Download
-                st.download_button(
-                    "💾 Download BMP",
-                    data=conv_bytes,
-                    file_name=f"boot_logo_{conv_model.replace(' ', '_').lower()}.bmp",
-                    mime="image/bmp",
-                    use_container_width=True,
-                )
-            except Exception as e:
-                st.error(f"Conversion error: {e}")
-
-
-# ============================================================================
-# TAB 3: VERIFY & PATCH
-# ============================================================================
-
-def tab_verify_and_patch():
-    """Image verification and offline patching."""
-
-    st.markdown("### Image Patching & Verification")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### ✓ Verify Safety")
-        st.markdown("Check image before flashing")
-
-        verify_img = st.file_uploader("Clone .img file", type="img", key="verify_img")
-        if verify_img:
-            img_path = None
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as tmp:
-                    tmp.write(verify_img.getvalue())
-                    img_path = tmp.name
-
-                result = ProtocolVerifier.verify_before_write(img_path)
-
-                for check, passed in result['checks'].items():
-                    icon = "✓" if passed else "✗"
-                    st.write(f"{icon} {check}")
-
-                if result['safe_to_write']:
-                    st.success("✓ Safe to write")
-                else:
-                    st.error("❌ Not safe to write")
-
-                if result['blocking_issues']:
-                    st.error("**Issues:**")
-                    for issue in result['blocking_issues']:
-                        st.write(f"• {issue}")
-            finally:
-                if img_path:
-                    Path(img_path).unlink(missing_ok=True)
-
-    with col2:
-        st.markdown("#### 🖌️ Patch Logo (Offline)")
-        st.markdown("Modify clone image without radio connection")
-
-        patch_img = st.file_uploader("Clone .img file", type="img", key="patch_img")
-        logo_patch = st.file_uploader("Logo image", type=["png", "jpg", "jpeg"], key="patch_logo")
-
-        if logo_patch:
-            st.image(Image.open(logo_patch), width=200, caption="Logo preview")
-
-        if st.button("Patch Image", use_container_width=True):
-            if patch_img and logo_patch:
-                img_path = None
-                logo_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as tmp:
-                        tmp.write(patch_img.getvalue())
-                        img_path = tmp.name
-
-                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                        tmp.write(logo_patch.getvalue())
-                        logo_path = tmp.name
-
-                    # Patch (simple offset 0x0000)
-                    patcher = LogoPatcher()
-                    result = patcher.patch_image(img_path, 0x0000, Image.open(logo_path).tobytes())
-
-                    patched_data = Path(img_path).read_bytes()
-                    st.download_button(
-                        "⬇️ Download Patched Image",
-                        data=patched_data,
-                        file_name="clone_patched.img",
-                        mime="application/octet-stream"
-                    )
-                    st.success("✓ Patched successfully")
-
-                except Exception as e:
-                    st.error(f"Patch failed: {e}")
-                finally:
-                    if img_path:
-                        Path(img_path).unlink(missing_ok=True)
-                    if logo_path:
-                        Path(logo_path).unlink(missing_ok=True)
-            else:
-                st.warning("Please upload both files")
 
 
 if __name__ == "__main__":

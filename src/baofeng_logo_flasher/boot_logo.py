@@ -746,13 +746,19 @@ def read_logo(
     """
     Read boot logo from radio via serial connection.
 
-    Uses the same handshake protocol as flash_logo to ensure compatibility.
+    Legacy block-read implementation for models with start_addr/magic config.
+    A5 logo protocol read-back is not implemented in this function.
 
     Returns:
         Tuple of (raw_bytes, radio_id)
     """
     if not serial and not simulate:
         raise BootLogoError("PySerial not installed")
+    if config.get("protocol") == "a5_logo":
+        raise BootLogoError(
+            "read_logo is not implemented for A5 logo protocol models; "
+            "direct upload is supported, read-back is not."
+        )
 
     size = config["size"]
     # Calculate expected logo size (RGB = 3 bytes per pixel)

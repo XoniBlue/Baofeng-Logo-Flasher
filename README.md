@@ -11,7 +11,6 @@ Reliable boot-logo flashing for Baofeng UV-5RM and UV-17-family radios.
 This repository provides a practical, working path for boot-logo flashing with:
 - direct serial A5 flashing (`upload-logo-serial`)
 - Streamlit UI backed by the same core logic
-- offline clone inspection and patching utilities
 
 Protocol-critical behavior implemented here:
 - UV-5RM/UV-17 A5 `CMD_WRITE` uses **chunk-index addressing** (`0,1,2,...`), not byte offsets.
@@ -70,8 +69,6 @@ baofeng-logo-flasher-ui
 | `baofeng-logo-flasher list-models` | Supported model configs |
 | `baofeng-logo-flasher show-model-config UV-5RM` | Effective model/protocol settings |
 | `baofeng-logo-flasher upload-logo-serial ...` | Direct serial logo upload |
-| `baofeng-logo-flasher inspect-img clone.img` | Clone metadata + hex preview |
-| `baofeng-logo-flasher scan-bitmaps clone.img` | Candidate logo region discovery |
 
 ## Byte Debug Mode
 

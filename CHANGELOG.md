@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Streamlit app simplified to two tabs:
+  - `Boot Logo Flasher`
+  - `Capabilities`
+- Removed Streamlit `Tools & Inspect` and `Verify/Patch` pages.
+- Removed CLI clone/patch inspection commands:
+  - `scan-logo`, `scan-bitmaps`, `inspect-img`, `verify-image`, `patch-logo`, `flash-logo` (clone patch flow)
+
+### Removed
+- Deprecated clone patch/verification code paths and modules no longer used by active workflow:
+  - `logo_patcher.py`
+  - `protocol_verifier.py`
+  - `bitmap_scanner.py`
+
 ## [0.2.0] - 2026-02-08
 
 ### Added

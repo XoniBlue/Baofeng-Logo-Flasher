@@ -6,9 +6,11 @@ from PIL import Image
 
 from baofeng_logo_flasher.boot_logo import (
     SERIAL_FLASH_CONFIGS,
+    BootLogoError,
     baofeng_encrypt,
     convert_bmp_to_raw,
     flash_logo,
+    read_logo,
 )
 
 
@@ -202,3 +204,16 @@ class TestA5Protocol:
         config = SERIAL_FLASH_CONFIGS["UV-17R"]
         assert config.get("protocol") == "a5_logo"
         assert config.get("write_addr_mode") == "chunk"
+
+
+class TestReadLogoSupport:
+    """Test read-logo support boundaries."""
+
+    def test_read_logo_rejects_a5_models(self):
+        """A5 direct logo protocol currently supports upload, not read-back."""
+        config = dict(SERIAL_FLASH_CONFIGS["UV-5RM"])
+        try:
+            read_logo("SIMULATED", config, simulate=True)
+            assert False, "Expected BootLogoError for A5 read_logo"
+        except BootLogoError as exc:
+            assert "not implemented" in str(exc).lower()
