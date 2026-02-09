@@ -34,9 +34,7 @@ except ImportError as e:
 
 from baofeng_logo_flasher.boot_logo import (
     SERIAL_FLASH_CONFIGS,
-    convert_raw_to_bmp,
     list_serial_ports,
-    read_logo,
     read_radio_id,
 )
 
@@ -925,83 +923,53 @@ def tab_boot_logo_flasher():
             st.rerun()
 
     with top_right:
-        step2_header_cols = st.columns([2.0, 1.2], vertical_alignment="center")
-        with step2_header_cols[0]:
-            step2_tip_rows = [
-                f"Auto-converted to {config['size'][0]}×{config['size'][1]} BMP.",
-                f"Max {BOOT_IMAGE_MAX_UPLOAD_MB} MB.",
-            ]
-            _render_section_header("Step 2 · Logo", step2_tip_rows, "Step 2 upload help")
-        with step2_header_cols[1]:
-            logo_action_mode = _render_inline_toggle(
-                "Backup mode",
-                ["Off: flash a new logo.", "On: backup/download current logo."],
-                key="logo_action_backup_mode",
-                value=st.session_state.get("logo_action_backup_mode", False),
-                aria_label="Backup mode help",
-            )
-        if not logo_action_mode:
-            uploaded_file = st.file_uploader(
-                "Logo image",
-                type=["bmp", "png", "jpg", "jpeg", "gif", "webp", "tiff"],
-                key="boot_logo_image",
-                label_visibility="collapsed",
-            )
-            if uploaded_file:
-                try:
-                    file_size = getattr(uploaded_file, "size", None)
-                    if file_size is not None and file_size > BOOT_IMAGE_MAX_UPLOAD_BYTES:
-                        st.error(
-                            f"Image is too large ({file_size / (1024 * 1024):.1f} MB). "
-                            f"Maximum is {BOOT_IMAGE_MAX_UPLOAD_MB} MB."
-                        )
-                        st.session_state.processed_bmp = None
-                        bmp_bytes = None
-                    else:
-                        original_img = Image.open(uploaded_file)
-                        expected_size = config["size"]
-                        st.caption(f"Input: {original_img.size[0]}×{original_img.size[1]} ({original_img.format or 'Unknown'})")
-
-                        # Fixed conversion path: auto-convert every upload to target BMP size.
-                        processed_img = _process_image_for_radio(
-                            original_img,
-                            expected_size,
-                            "Fill (stretch)",
-                            "#000000",
-                        )
-                        st.session_state.processed_bmp = _image_to_bmp_bytes(processed_img)
-                        bmp_bytes = st.session_state.processed_bmp
-                        st.success(f"Converted to {expected_size[0]}×{expected_size[1]} BMP and ready to flash.")
-
-                        st.download_button(
-                            "💾 Download Processed BMP",
-                            data=bmp_bytes,
-                            file_name="boot_logo_processed.bmp",
-                            mime="image/bmp",
-                            use_container_width=True,
-                        )
-                except Exception as exc:
-                    st.error(f"Image processing error: {exc}")
+        step2_tip_rows = [
+            f"Auto-converted to {config['size'][0]}×{config['size'][1]} BMP.",
+            f"Max {BOOT_IMAGE_MAX_UPLOAD_MB} MB.",
+        ]
+        _render_section_header("Step 2 · Logo", step2_tip_rows, "Step 2 upload help")
+        uploaded_file = st.file_uploader(
+            "Logo image",
+            type=["bmp", "png", "jpg", "jpeg", "gif", "webp", "tiff"],
+            key="boot_logo_image",
+            label_visibility="collapsed",
+        )
+        if uploaded_file:
+            try:
+                file_size = getattr(uploaded_file, "size", None)
+                if file_size is not None and file_size > BOOT_IMAGE_MAX_UPLOAD_BYTES:
+                    st.error(
+                        f"Image is too large ({file_size / (1024 * 1024):.1f} MB). "
+                        f"Maximum is {BOOT_IMAGE_MAX_UPLOAD_MB} MB."
+                    )
+                    st.session_state.processed_bmp = None
                     bmp_bytes = None
-        else:
-            backup_supported = all(k in config for k in ("start_addr", "magic")) and config.get("protocol") != "a5_logo"
-            if backup_supported:
-                backup_simulate = st.toggle("Simulate backup", value=True, key="backup_simulate")
-                if st.button("⬇️ Download Current Logo", use_container_width=True):
-                    _do_download_logo(port, config, backup_simulate)
-            else:
-                st.info(
-                    "Direct radio logo read-back is not implemented for UV-5RM/UV-17 A5 in this app."
-                )
-                last_backup = _last_flash_backup_path(model)
-                if last_backup.exists():
+                else:
+                    original_img = Image.open(uploaded_file)
+                    expected_size = config["size"]
+                    st.caption(f"Input: {original_img.size[0]}×{original_img.size[1]} ({original_img.format or 'Unknown'})")
+
+                    # Fixed conversion path: auto-convert every upload to target BMP size.
+                    processed_img = _process_image_for_radio(
+                        original_img,
+                        expected_size,
+                        "Fill (stretch)",
+                        "#000000",
+                    )
+                    st.session_state.processed_bmp = _image_to_bmp_bytes(processed_img)
+                    bmp_bytes = st.session_state.processed_bmp
+                    st.success(f"Converted to {expected_size[0]}×{expected_size[1]} BMP and ready to flash.")
+
                     st.download_button(
-                        "💾 Download Last Flashed Logo",
-                        data=last_backup.read_bytes(),
-                        file_name=f"{model.replace(' ', '_').lower()}_last_flashed.bmp",
+                        "💾 Download Processed BMP",
+                        data=bmp_bytes,
+                        file_name="boot_logo_processed.bmp",
                         mime="image/bmp",
                         use_container_width=True,
                     )
+            except Exception as exc:
+                st.error(f"Image processing error: {exc}")
+                bmp_bytes = None
 
     st.divider()
     payload_bytes = config["size"][0] * config["size"][1] * 2
@@ -1040,7 +1008,7 @@ def tab_boot_logo_flasher():
     simulate = not write_mode_enabled
     write_confirmed = True
 
-    can_flash = bool((not logo_action_mode) and bmp_bytes and port)
+    can_flash = bool(bmp_bytes and port)
     with st.form("flash_logo_form", clear_on_submit=False):
         submitted = st.form_submit_button(
             "🚀 Connect & Flash Logo" if write_mode_enabled else "🧪 Simulate Flash",
@@ -1053,8 +1021,6 @@ def tab_boot_logo_flasher():
             st.error("❌ Please upload a BMP file")
         elif not port:
             st.error("❌ Please enter a serial port")
-        elif logo_action_mode:
-            st.error("❌ Backup mode is enabled. Turn off Backup mode to flash.")
         else:
             _do_flash(
                 port,
@@ -1211,98 +1177,6 @@ def _do_flash(
         # Resume connection polling after an operation completes.
         st.session_state.connection_freeze_polling = False
         st.session_state.connection_poll_meta["last_probe_ts"] = 0.0
-
-
-def _do_download_logo(port: str, config: dict, simulate: bool):
-    """Execute the download/backup logo operation."""
-    try:
-        if config.get("protocol") == "a5_logo":
-            raise ValueError(
-                "Backup logo download is not implemented for A5 serial protocol models in this app."
-            )
-        required = ("start_addr", "magic")
-        missing = [k for k in required if k not in config]
-        if missing:
-            raise ValueError(
-                "Backup logo not supported for this model config "
-                f"(missing: {', '.join(missing)})."
-            )
-
-        st.markdown("---")
-
-        # Progress tracking
-        progress_placeholder = st.empty()
-        status_placeholder = st.empty()
-
-        def _progress_cb(read_bytes: int, total: int) -> None:
-            pct = min(int((read_bytes / total) * 100), 100)
-            with progress_placeholder.container():
-                st.progress(pct)
-            with status_placeholder.container():
-                st.text(f"Progress: {read_bytes:,} / {total:,} bytes ({pct}%)")
-
-        with st.spinner("📥 Reading boot logo..." if not simulate else "🧪 Simulating read..."):
-            raw_data, radio_id = read_logo(
-                port,
-                config,
-                simulate=simulate,
-                progress_cb=_progress_cb if not simulate else None,
-            )
-
-        # Convert to BMP
-        bmp_data = convert_raw_to_bmp(raw_data, config)
-
-        # Success output and download button
-        st.markdown("---")
-        if simulate:
-            st.info(f"✓ **Simulation complete:** Would read {len(raw_data):,} bytes")
-            st.success("Ready for real download when you are!")
-        else:
-            st.success(f"✅ **Download successful!** Radio: {radio_id}")
-            st.info(f"Read {len(raw_data):,} bytes from address 0x{config['start_addr']:04X}")
-
-        # Provide download button for the BMP file
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"boot_logo_backup_{timestamp}.bmp"
-
-        st.download_button(
-            label="💾 Save Boot Logo (BMP)",
-            data=bmp_data,
-            file_name=filename,
-            mime="image/bmp",
-            use_container_width=True,
-        )
-
-        # Also show a preview
-        try:
-            import io
-            from PIL import Image
-            img = Image.open(io.BytesIO(bmp_data))
-            st.image(img, caption=f"Downloaded logo ({img.size[0]}×{img.size[1]})", use_column_width=True)
-        except Exception:
-            pass  # Preview is optional
-
-    except Exception as exc:
-        error_msg = str(exc)
-        st.error(f"❌ **Download failed:**\n{error_msg}")
-
-        # Provide helpful context for common errors
-        if "Incomplete response" in error_msg or "Invalid response" in error_msg:
-            st.info(
-                """
-                **Why this happens:**
-
-                Some radios (like UV-5RM) store the boot logo in flash memory that cannot
-                be read using the standard clone protocol. The radio only supports *writing*
-                new logos to this memory area.
-
-                **Alternatives:**
-                - Use CHIRP to create a full radio backup before flashing
-                - You can still flash a new logo without backing up the original
-                """
-            )
-        logger.exception("Boot logo download error")
 
 
 if __name__ == "__main__":

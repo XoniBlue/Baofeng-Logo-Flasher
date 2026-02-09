@@ -19,17 +19,14 @@ from rich.progress import Progress, BarColumn, TextColumn
 
 from baofeng_logo_flasher.protocol import UV5RMTransport, UV5RMProtocol
 from baofeng_logo_flasher.boot_logo import (
-    BootLogoService,
-    BootLogoModelConfig,
-    MODEL_CONFIGS,
     SERIAL_FLASH_CONFIGS,
-    BOOT_LOGO_SIZE,
-    BootLogoError,
 )
-from baofeng_logo_flasher.bmp_utils import validate_bmp_bytes
 
 # Import from core module for unified logic
-from baofeng_logo_flasher.core.parsing import parse_offset as _parse_offset_core
+from baofeng_logo_flasher.core.parsing import (
+    parse_offset as _parse_offset_core,
+    parse_bitmap_format as _parse_bitmap_format_core,
+)
 from baofeng_logo_flasher.core.safety import (
     SafetyContext,
     require_write_permission,
@@ -116,6 +113,22 @@ def parse_int(value: Optional[str], label: str) -> Optional[int]:
         raise typer.BadParameter(f"Invalid {label}: {value}")
 
 
+def parse_offset(value: Optional[str]) -> Optional[int]:
+    """CLI-compatible wrapper around core offset parsing."""
+    try:
+        return _parse_offset_core(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+
+def parse_bitmap_format(value: str):
+    """CLI-compatible wrapper around core bitmap-format parsing."""
+    try:
+        return _parse_bitmap_format_core(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+
 def confirm_write_with_details(
     write_flag: bool,
     model: str,
@@ -185,7 +198,10 @@ def confirm_write_with_details(
         console.print(f"  --write --confirm WRITE")
         console.print()
         console.print("[bold]Example:[/bold]")
-        console.print(f"  baofeng-logo-flasher upload-logo --port /dev/ttyUSB0 --in logo.bmp --write --confirm WRITE")
+        console.print(
+            "  baofeng-logo-flasher upload-logo-serial "
+            "--port /dev/ttyUSB0 --in logo.bmp --model UV-5RM --write --confirm WRITE"
+        )
         console.print()
         console.print("[dim]The confirmation token 'WRITE' must match exactly (case-insensitive).[/dim]")
         raise typer.Abort()
@@ -573,317 +589,6 @@ def detect(
     except Exception as exc:
         print_error(f"Detect failed: {exc}")
         sys.exit(1)
-
-
-@app.command()
-def read_clone(
-    port: str = typer.Option(..., "--port", "-p", help="Serial port (e.g., /dev/ttyUSB0)"),
-    output: Optional[str] = typer.Option(None, "--output", "-o", help="Save to file"),
-) -> None:
-    """Download clone from radio and save to file."""
-    print_header("Download Clone from Radio")
-
-    console.print(f"Port: {port}")
-
-    try:
-        transport = UV5RMTransport(port)
-        transport.open()
-
-        with Progress(
-            TextColumn("[{task.description}]"),
-            BarColumn(),
-            TextColumn("[{task.percentage:.0f}%]"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Connecting...", total=100)
-            protocol = UV5RMProtocol(transport)
-
-            progress.update(task, description="Identifying radio...")
-            ident_result = protocol.identify_radio()
-            progress.update(task, advance=25)
-
-            progress.update(task, description="Downloading clone...")
-            clone_data = protocol.download_clone()
-            progress.update(task, advance=50)
-
-            progress.update(task, description="Closing connection...")
-            transport.close()
-            progress.update(task, advance=25)
-
-        # Display results
-        table = Table(title="Radio Information")
-        table.add_column("Property", style="cyan")
-        table.add_column("Value", style="green")
-
-        table.add_row("Model", ident_result['model'])
-        table.add_row("Firmware", ident_result['version'].decode('latin-1', errors='ignore'))
-        table.add_row("Dropped Byte", str(ident_result['has_dropped_byte']))
-        table.add_row("Clone Size", f"{len(clone_data):,} bytes")
-
-        console.print(table)
-
-        # Save to file
-        if output:
-            output_path = Path(output)
-            output_path.write_bytes(clone_data)
-            print_success(f"Clone saved to {output_path}")
-        else:
-            print_success("Clone downloaded successfully")
-
-    except Exception as e:
-        print_error(f"Download failed: {e}")
-        sys.exit(1)
-
-
-@app.command("download-logo")
-def download_logo(
-    port: str = typer.Option(..., "--port", "-p", help="Serial port"),
-    out: Optional[str] = typer.Option(None, "--out", help="Output BMP file"),
-    model: Optional[str] = typer.Option(None, "--model", help="Override model name"),
-    logo_start: Optional[str] = typer.Option(None, "--logo-start", help="Logo start address"),
-    logo_length: Optional[str] = typer.Option(None, "--logo-length", help="Logo length"),
-    block_size: Optional[str] = typer.Option(None, "--block-size", help="Block size"),
-    discover: bool = typer.Option(False, "--discover", help="Discover logo region"),
-    scan_start: Optional[str] = typer.Option(None, "--scan-start", help="Discovery scan start"),
-    scan_end: Optional[str] = typer.Option(None, "--scan-end", help="Discovery scan end"),
-    scan_stride: Optional[str] = typer.Option(None, "--scan-stride", help="Discovery scan stride"),
-    raw: bool = typer.Option(False, "--raw", help="Save raw bytes without BMP validation"),
-) -> None:
-    """Download boot logo from the radio."""
-    print_header("Download Boot Logo")
-
-    console.print(f"Port: {port}")
-
-    logo_start_val = parse_int(logo_start, "logo-start")
-    logo_length_val = parse_int(logo_length, "logo-length")
-    block_size_val = parse_int(block_size, "block-size")
-    scan_start_val = parse_int(scan_start, "scan-start")
-    scan_end_val = parse_int(scan_end, "scan-end")
-    scan_stride_val = parse_int(scan_stride, "scan-stride")
-
-    try:
-        transport = UV5RMTransport(port)
-        transport.open()
-        protocol = UV5RMProtocol(transport)
-        ident_result = protocol.identify_radio()
-
-        model_name = model or ident_result["model"]
-        service = BootLogoService(protocol)
-
-        config = MODEL_CONFIGS.get(
-            model_name,
-            BootLogoModelConfig(name=model_name, logo_region=None, scan_ranges=[]),
-        )
-
-        if logo_start_val is not None and logo_length_val is not None:
-            region = service.resolve_logo_region(
-                config,
-                logo_start=logo_start_val,
-                logo_length=logo_length_val,
-                block_size=block_size_val,
-            )
-        elif discover:
-            if scan_start_val is None or scan_end_val is None:
-                raise BootLogoError("Discovery requires --scan-start and --scan-end")
-            ranges = [(scan_start_val, scan_end_val)]
-            stride = scan_stride_val or 0x10
-            region = service.discover_logo_region(
-                ranges,
-                block_size=block_size_val or 0x40,
-                scan_stride=stride,
-            )
-        else:
-            region = service.resolve_logo_region(config, block_size=block_size_val)
-
-        data = bytearray()
-        end = region.start + region.length
-
-        with Progress(
-            TextColumn("[{task.description}]"),
-            BarColumn(),
-            TextColumn("[{task.percentage:.0f}%]"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Reading logo...", total=region.length)
-            for addr in range(region.start, end, region.block_size):
-                size = min(region.block_size, end - addr)
-                block = protocol.read_block(addr, size)
-                data.extend(block)
-                progress.update(task, advance=len(block))
-
-        transport.close()
-
-        if not raw:
-            validate_bmp_bytes(bytes(data), BOOT_LOGO_SIZE)
-
-        output_path = Path(out) if out else None
-        if output_path is None:
-            safe_model = model_name.replace(" ", "_")
-            output_path = Path(f"boot_logo_{safe_model}.{'bin' if raw else 'bmp'}")
-
-        output_path.write_bytes(bytes(data))
-        print_success(f"Saved {len(data)} bytes to {output_path}")
-    except Exception as exc:
-        print_error(f"Download failed: {exc}")
-        sys.exit(1)
-    finally:
-        if transport is not None:
-            transport.close()
-
-
-@app.command("upload-logo")
-def upload_logo(
-    port: str = typer.Option(..., "--port", "-p", help="Serial port"),
-    image: str = typer.Option(..., "--in", "-i", help="Input image (BMP/PNG/JPG)"),
-    model: Optional[str] = typer.Option(None, "--model", help="Override model name"),
-    logo_start: Optional[str] = typer.Option(None, "--logo-start", help="Logo start address"),
-    logo_length: Optional[str] = typer.Option(None, "--logo-length", help="Logo length"),
-    block_size: Optional[str] = typer.Option(None, "--block-size", help="Block size"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate only, no write"),
-    yes: bool = typer.Option(
-        False,
-        "--yes",
-        help="[DEPRECATED] This flag does not bypass safety confirmation. Use --confirm WRITE instead.",
-        hidden=True,
-    ),
-    confirm: Optional[str] = typer.Option(
-        None,
-        "--confirm",
-        help="Non-interactive confirmation token (must be 'WRITE' for write operations)",
-    ),
-    discover: bool = typer.Option(False, "--discover", help="Discover logo region"),
-    scan_start: Optional[str] = typer.Option(None, "--scan-start", help="Discovery scan start"),
-    scan_end: Optional[str] = typer.Option(None, "--scan-end", help="Discovery scan end"),
-    scan_stride: Optional[str] = typer.Option(None, "--scan-stride", help="Discovery scan stride"),
-    accept_discovered: bool = typer.Option(
-        False,
-        "--accept-discovered",
-        help="Allow writes to discovered logo region",
-    ),
-    write: bool = typer.Option(
-        False,
-        "--write",
-        help="Required flag to enable actual write to radio",
-    ),
-) -> None:
-    """Upload a boot logo to the radio."""
-    print_header("Upload Boot Logo")
-
-    # Deprecation warning for --yes
-    if yes:
-        print_warning("--yes is deprecated and does not bypass safety confirmation.")
-        print_warning("Use --write --confirm WRITE for non-interactive confirmation.")
-        console.print()
-
-    if not Path(image).exists():
-        print_error(f"File not found: {image}")
-        sys.exit(1)
-
-    logo_start_val = parse_int(logo_start, "logo-start")
-    logo_length_val = parse_int(logo_length, "logo-length")
-    block_size_val = parse_int(block_size, "block-size")
-    scan_start_val = parse_int(scan_start, "scan-start")
-    scan_end_val = parse_int(scan_end, "scan-end")
-    scan_stride_val = parse_int(scan_stride, "scan-stride")
-
-    transport = None
-    try:
-        transport = UV5RMTransport(port)
-        transport.open()
-        protocol = UV5RMProtocol(transport)
-        ident_result = protocol.identify_radio()
-
-        model_name = model or ident_result["model"]
-        service = BootLogoService(protocol)
-
-        config = MODEL_CONFIGS.get(
-            model_name,
-            BootLogoModelConfig(name=model_name, logo_region=None, scan_ranges=[]),
-        )
-
-        if logo_start_val is not None and logo_length_val is not None:
-            region = service.resolve_logo_region(
-                config,
-                logo_start=logo_start_val,
-                logo_length=logo_length_val,
-                block_size=block_size_val,
-            )
-        elif discover:
-            if scan_start_val is None or scan_end_val is None:
-                raise BootLogoError("Discovery requires --scan-start and --scan-end")
-            if not accept_discovered and not dry_run:
-                raise BootLogoError(
-                    "Discovered region requires --accept-discovered for writes"
-                )
-            ranges = [(scan_start_val, scan_end_val)]
-            stride = scan_stride_val or 0x10
-            region = service.discover_logo_region(
-                ranges,
-                block_size=block_size_val or 0x40,
-                scan_stride=stride,
-            )
-        else:
-            region = service.resolve_logo_region(config, block_size=block_size_val)
-
-        logo_bytes = service.prepare_logo_bytes(image)
-        validate_bmp_bytes(logo_bytes, BOOT_LOGO_SIZE)
-
-        if len(logo_bytes) != region.length:
-            raise BootLogoError(
-                f"Logo data length {len(logo_bytes)} does not match region {region.length}"
-            )
-
-        if dry_run:
-            print_success("Dry run complete: no data written")
-            transport.close()
-            return
-
-        # Require --write flag and typed confirmation
-        confirm_write_with_details(
-            write_flag=write,
-            model=model_name,
-            target_region=f"Logo region 0x{region.start:06X}-0x{region.start + region.length:06X}",
-            bytes_length=len(logo_bytes),
-            offset=region.start,
-            confirm_token=confirm,
-        )
-
-        end = region.start + region.length
-        offset = 0
-
-        with Progress(
-            TextColumn("[{task.description}]"),
-            BarColumn(),
-            TextColumn("[{task.percentage:.0f}%]"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Writing logo...", total=region.length)
-            for addr in range(region.start, end, region.block_size):
-                size = min(region.block_size, end - addr)
-                chunk = logo_bytes[offset:offset + size]
-                protocol.write_block(addr, chunk)
-                offset += size
-                progress.update(task, advance=len(chunk))
-
-        readback = bytearray()
-        for addr in range(region.start, end, region.block_size):
-            size = min(region.block_size, end - addr)
-            readback.extend(protocol.read_block(addr, size))
-
-        if bytes(readback) != logo_bytes:
-            raise BootLogoError("Readback verification failed")
-
-        transport.close()
-        print_success("Boot logo uploaded")
-    except typer.Abort:
-        print_warning("Upload cancelled")
-        sys.exit(0)
-    except Exception as exc:
-        print_error(f"Upload failed: {exc}")
-        sys.exit(1)
-    finally:
-        if transport is not None:
-            transport.close()
 
 
 @app.command("upload-logo-serial")
