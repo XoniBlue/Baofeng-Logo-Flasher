@@ -21,6 +21,11 @@ export class WebSerialPort {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private rxBuffer = new Uint8Array();
+  private pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
+
+  private isReadTimeout(error: unknown): boolean {
+    return error instanceof Error && error.message === "Read timeout";
+  }
 
   async requestPort(): Promise<void> {
     if (!navigator.serial) {
@@ -42,6 +47,7 @@ export class WebSerialPort {
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
     this.rxBuffer = new Uint8Array();
+    this.pendingRead = null;
   }
 
   async pulseSignals(lowMs = 40, highMs = 80): Promise<void> {
@@ -72,16 +78,33 @@ export class WebSerialPort {
       return data;
     }
 
+    if (!this.pendingRead) {
+      this.pendingRead = this.reader.read().finally(() => {
+        this.pendingRead = null;
+      });
+    }
+
+    let timeoutId = 0;
     const timeout = new Promise<never>((_, reject) => {
-      window.setTimeout(() => reject(new Error("Read timeout")), timeoutMs);
+      timeoutId = window.setTimeout(() => reject(new Error("Read timeout")), timeoutMs);
     });
 
-    const readPromise = this.reader.read();
-    const result = await Promise.race([readPromise, timeout]);
+    const result = await Promise.race([this.pendingRead, timeout]);
+    window.clearTimeout(timeoutId);
     if (result.done) {
       return new Uint8Array();
     }
     return result.value ?? new Uint8Array();
+  }
+
+  unread(data: Uint8Array): void {
+    if (data.length === 0) {
+      return;
+    }
+    const merged = new Uint8Array(data.length + this.rxBuffer.length);
+    merged.set(data, 0);
+    merged.set(this.rxBuffer, data.length);
+    this.rxBuffer = merged;
   }
 
   async readExact(length: number, timeoutMs: number): Promise<Uint8Array> {
@@ -96,7 +119,15 @@ export class WebSerialPort {
         throw new Error("Read timeout");
       }
 
-      const chunk = await this.readAtMost(remainingMs);
+      let chunk: Awaited<ReturnType<WebSerialPort["readAtMost"]>> = new Uint8Array(0);
+      try {
+        chunk = await this.readAtMost(Math.min(remainingMs, 120));
+      } catch (error) {
+        if (!this.isReadTimeout(error)) {
+          throw error;
+        }
+        continue;
+      }
       if (chunk.length === 0) {
         continue;
       }
@@ -131,6 +162,7 @@ export class WebSerialPort {
     this.reader = null;
     this.writer = null;
     this.rxBuffer = new Uint8Array();
+    this.pendingRead = null;
     if (this.port) {
       await this.port.close();
     }

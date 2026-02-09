@@ -20,10 +20,11 @@ export const CHUNK_SIZE = 1024;
 export const CONFIG_PAYLOAD = new Uint8Array([0x00, 0x00, 0x0c, 0x00, 0x00, 0x01]);
 export const SETUP_PAYLOAD = new Uint8Array([0x00, 0x00, 0x0c, 0x00]);
 
-export const PREWRITE_MAX_ATTEMPTS = 3;
+export const PREWRITE_MAX_ATTEMPTS = 2;
 export const PREWRITE_RETRY_DELAY_MS = 200;
 export const HANDSHAKE_TIMEOUT_MS = 4000;
 export const HANDSHAKE_TIMEOUT_CONSERVATIVE_MS = 7000;
+export const PREWRITE_FRAME_TIMEOUT_MS = 3500;
 
 export const TIMING_MS = {
   openSettle: 100,

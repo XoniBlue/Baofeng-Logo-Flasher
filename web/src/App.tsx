@@ -5,6 +5,7 @@ import { chunkImageData, calcWriteAddr } from "./protocol/chunking";
 import { buildFrame } from "./protocol/frame";
 import { imageFileTo565 } from "./protocol/image565";
 import { SERIAL_FLASH_CONFIGS } from "./protocol/modelConfigs";
+import { requireWritePermission } from "./protocol/safety";
 import { LogoUploader } from "./protocol/uploader";
 import { WebSerialPort } from "./serial/webSerialPort";
 import { loadModel, loadWriteMode, saveModel, saveWriteMode } from "./storage/settings";
@@ -27,17 +28,6 @@ function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array 
     offset += frame.length;
   }
   return stream;
-}
-
-function downloadBytes(name: string, bytes: Uint8Array): void {
-  const buffer = new Uint8Array(bytes).buffer as ArrayBuffer;
-  const blob = new Blob([buffer], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 export default function App(): JSX.Element {
@@ -80,10 +70,19 @@ export default function App(): JSX.Element {
 
   const onConnect = async (): Promise<void> => {
     setError("");
+    setSuccess("");
     try {
       await serialRef.current.requestPort();
       setConnected(true);
       appendLog("Serial port selected");
+      const probeUploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
+      const probeOk = await probeUploader.probeIdentity(handshakeProfile, appendLog);
+      if (probeOk) {
+        setSuccess("Advisory probe succeeded. Radio responded to A5 handshake.");
+        appendLog("Advisory identity probe: high confidence (A5 handshake ACK)");
+      } else {
+        appendLog("Advisory identity probe: low confidence (no A5 handshake ACK)");
+      }
     } catch (connectError) {
       setError(String(connectError));
     }
@@ -100,24 +99,30 @@ export default function App(): JSX.Element {
     setProgress(0);
 
     try {
+      const addressMode = "chunk" as const;
+      appendLog(`Write address mode: ${addressMode.toUpperCase()}`);
+
       if (!writeMode) {
-        const frameStream = toFrameStream(payload, selectedModel.writeAddrMode);
-        downloadBytes("image_payload.bin", payload);
-        downloadBytes("write_frames.bin", frameStream);
+        const frameStream = toFrameStream(payload, addressMode);
         setProgress(100);
-        setSuccess("Simulation complete. Payload and frame stream downloaded.");
+        setSuccess("Simulation complete.");
         appendLog(`Simulation complete (${frameStream.length} frame-stream bytes)`);
         return;
       }
 
       const token = window.prompt("Type WRITE to confirm radio write:");
-      if ((token ?? "").trim().toUpperCase() !== "WRITE") {
-        throw new Error("Write confirmation token mismatch.");
-      }
+      requireWritePermission({
+        writeEnabled: writeMode,
+        confirmationToken: token,
+        interactive: true,
+        modelDetected: selectedModel.model,
+        regionKnown: SERIAL_FLASH_CONFIGS.some((cfg) => cfg.model === selectedModel.model),
+        simulate: false
+      });
 
       const uploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
-      const debug = await uploader.upload(payload, {
-        addressMode: selectedModel.writeAddrMode,
+      const { frameCount } = await uploader.upload(payload, {
+        addressMode,
         pixelOrder: selectedModel.pixelOrder,
         handshakeProfile,
         progress: (sent, total) => {
@@ -126,12 +131,9 @@ export default function App(): JSX.Element {
         log: appendLog
       });
 
-      downloadBytes("image_payload.bin", debug.payload);
-      downloadBytes("write_frames.bin", debug.frameStream);
-
       setProgress(100);
       setSuccess("Flash complete. Power cycle the radio to view the logo.");
-      appendLog(`Flash complete (${debug.frameCount} frames)`);
+      appendLog(`Flash complete (${frameCount} frames)`);
     } catch (flashError) {
       setError(String(flashError));
       appendLog(`Error: ${String(flashError)}`);
