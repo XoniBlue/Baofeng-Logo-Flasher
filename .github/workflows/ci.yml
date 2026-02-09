@@ -1,26 +1,28 @@
-name: v2 CI
+name: Web CI
 
 on:
   push:
     paths:
-      - 'v2/**'
+      - "web/**"
+      - ".github/workflows/ci.yml"
   pull_request:
     paths:
-      - 'v2/**'
+      - "web/**"
+      - ".github/workflows/ci.yml"
 
 jobs:
   web:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: v2/web
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: v2/web/package-lock.json
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm test
       - run: npm run build
