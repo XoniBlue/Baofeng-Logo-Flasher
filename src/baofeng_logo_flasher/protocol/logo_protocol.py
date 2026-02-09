@@ -56,6 +56,10 @@ CHUNK_SIZE = 1024  # Bytes per frame for image data (len=0x0400 in captures)
 CONFIG_PAYLOAD = bytes([0x00, 0x00, 0x0C, 0x00, 0x00, 0x01])
 SETUP_PAYLOAD = bytes([0x00, 0x00, 0x0C, 0x00])
 
+# Retry only pre-write handshake/setup operations; do not retry chunk writes.
+PREWRITE_MAX_ATTEMPTS = 2
+PREWRITE_RETRY_DELAY_SEC = 0.2
+
 
 class LogoProtocolError(Exception):
     """Errors raised by logo protocol operations."""
@@ -634,8 +638,6 @@ class LogoUploader:
             Success message string
         """
         try:
-            self.open()
-
             # Convert image to RGB565
             logger.info(f"Converting image to RGB565 ({IMAGE_WIDTH}x{IMAGE_HEIGHT})...")
             image_data = convert_image_to_rgb565(
@@ -666,12 +668,31 @@ class LogoUploader:
                 )
                 logger.info("Wrote debug byte artifacts to %s", manifest_path.parent)
 
-            # Execute protocol sequence
-            self.handshake()
-            self.enter_logo_mode()
-            self.send_init_frame()
-            self.send_config_frame()
-            self.send_setup_frame()
+            # Retry only the pre-write phase (handshake/setup). This phase does not
+            # write image chunk data, so a bounded retry is safe.
+            for attempt in range(1, PREWRITE_MAX_ATTEMPTS + 1):
+                try:
+                    self.open()
+                    self.handshake()
+                    self.enter_logo_mode()
+                    self.send_init_frame()
+                    self.send_config_frame()
+                    self.send_setup_frame()
+                    break
+                except LogoProtocolError as exc:
+                    self.close()
+                    if attempt >= PREWRITE_MAX_ATTEMPTS:
+                        raise
+                    logger.warning(
+                        "Pre-write protocol step failed (attempt %d/%d): %s; retrying in %.1fs",
+                        attempt,
+                        PREWRITE_MAX_ATTEMPTS,
+                        exc,
+                        PREWRITE_RETRY_DELAY_SEC,
+                    )
+                    time.sleep(PREWRITE_RETRY_DELAY_SEC)
+
+            # Do not retry after chunk writes begin to avoid duplicate data frames.
             self.send_image_data(image_data, progress_cb, address_mode=address_mode)
             self.send_completion_frame()
 
