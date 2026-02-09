@@ -74,7 +74,6 @@ BOOT_IMAGE_MAX_UPLOAD_MB = 10
 BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
 AUTO_PROBE_PORT_LIMIT = 3
 AUTO_PROBE_TIMEOUT_SEC = 1.5
-PORT_SCAN_TIMEOUT_SEC = 1.0
 
 # Explicit medium-confidence criteria:
 # 1) Known USB-UART bridge VID (CP210x/CH34x/PL2303/FTDI), or
@@ -107,10 +106,6 @@ def _init_session_state():
         st.session_state.connection_last_ready = None
     if "connection_autoselect_reason" not in st.session_state:
         st.session_state.connection_autoselect_reason = ""
-    if "connection_scan_seq" not in st.session_state:
-        st.session_state.connection_scan_seq = 0
-    if "connection_autoselect_seq" not in st.session_state:
-        st.session_state.connection_autoselect_seq = 0
     if "connection_last_ports_snapshot" not in st.session_state:
         st.session_state.connection_last_ports_snapshot = ()
     # Initialize write mode state from UI components
@@ -688,7 +683,6 @@ def _auto_select_port(
     model: str,
     config: dict,
     ports: list[str],
-    force_full_scan: bool,
 ) -> tuple[Optional[str], str]:
     """
     Auto-select a likely port using bounded probing and explicit fallback rules.
@@ -704,14 +698,12 @@ def _auto_select_port(
     metadata = _list_port_metadata()
     ranked_ports = _rank_ports_for_autoselect(ports, metadata)
 
-    probe_limit = len(ranked_ports) if force_full_scan else min(AUTO_PROBE_PORT_LIMIT, len(ranked_ports))
-    probed = ranked_ports[:probe_limit]
+    probed = ranked_ports[: min(AUTO_PROBE_PORT_LIMIT, len(ranked_ports))]
     handshake_hits = []
     handshake_failed = set()
-    timeout_cap = PORT_SCAN_TIMEOUT_SEC if force_full_scan else AUTO_PROBE_TIMEOUT_SEC
 
     for dev in probed:
-        probe = _probe_radio_identity(dev, model, config, timeout_cap=timeout_cap)
+        probe = _probe_radio_identity(dev, model, config, timeout_cap=AUTO_PROBE_TIMEOUT_SEC)
         if probe.get("ok"):
             handshake_hits.append(dev)
         else:
@@ -742,8 +734,7 @@ def _auto_select_port(
         dev, score = medium_ranked[0]
         return dev, f"Auto-selected strongest medium-confidence port ({dev}, score={score})."
 
-    limit_note = f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached." if not force_full_scan else "Full scan completed."
-    return None, f"{limit_note} No unique high-confidence candidate."
+    return None, f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached. No unique high-confidence candidate."
 
 
 def _probe_connection_status(port: str, model: str, config: dict, force: bool = False) -> dict:
@@ -1007,21 +998,17 @@ def tab_boot_logo_flasher():
         st.session_state.selected_model = selected_model
         should_autoselect = (
             ports_snapshot != st.session_state.connection_last_ports_snapshot
-            or st.session_state.connection_autoselect_seq != st.session_state.connection_scan_seq
             or (st.session_state.selected_port and st.session_state.selected_port not in ports)
             or (not st.session_state.selected_port)
         )
 
         if should_autoselect:
-            force_scan = st.session_state.connection_autoselect_seq != st.session_state.connection_scan_seq
             auto_port, reason = _auto_select_port(
                 model=selected_model,
                 config=dict(SERIAL_FLASH_CONFIGS[selected_model]),
                 ports=ports,
-                force_full_scan=force_scan,
             )
             st.session_state.connection_last_ports_snapshot = ports_snapshot
-            st.session_state.connection_autoselect_seq = st.session_state.connection_scan_seq
             st.session_state.connection_autoselect_reason = reason
             if auto_port:
                 st.session_state.selected_port = auto_port
