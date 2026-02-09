@@ -1078,10 +1078,6 @@ def tab_boot_logo_flasher():
 
         show_controls = st.session_state.connection_show_controls or not ready_now
         if show_controls:
-            control_top = st.columns([1, 1.35], vertical_alignment="center")
-            with control_top[0]:
-                if st.button("Scan", use_container_width=True):
-                    st.session_state.connection_scan_seq += 1
             conn_cols = st.columns(2)
             with conn_cols[0]:
                 model = st.selectbox(
