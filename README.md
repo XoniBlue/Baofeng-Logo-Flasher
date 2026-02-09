@@ -10,6 +10,8 @@
 
 Local, safety-gated boot logo flashing for supported Baofeng radios using serial USB.
 
+**Recommended way to use this project:** the local Streamlit web GUI (`make start`, then open `http://localhost:8501`).
+
 ---
 
 ## Quick Navigation
@@ -30,6 +32,18 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 ## 1) Project overview
 
 Baofeng Logo Flasher prepares and flashes a boot logo to compatible radios over a local serial connection.
+
+### Why this project exists
+
+This project started from a practical need on macOS: running the Baofeng CPS workflow in Wine was not successful, and there was no Windows machine or interest in running a Windows VM just to flash a logo.
+
+After searching for a dedicated logo flasher and not finding one, this repo was built by reverse engineering the protocol and implementing a proper local flashing workflow.
+
+Current testing status:
+- Fully tested by the author on `macOS`.
+- Not yet fully validated on `Windows` or `Linux` end-to-end.
+- Because this is Python-based, it should work cross-platform where serial access and dependencies are available.
+- Additional testers, especially for non-macOS setups and other models, are welcome.
 
 ### Direct serial flashing path (recommended)
 
@@ -68,8 +82,11 @@ Baofeng Logo Flasher prepares and flashes a boot logo to compatible radios over 
 |---|---|
 | OS | macOS, Linux, or Windows |
 | Python | `3.9+` |
+| Makefile usage | `make` + a POSIX shell (`bash`/`sh`) |
 | Hardware | Compatible radio + data-capable USB cable |
 | Access | Serial/COM port permissions |
+
+If you do not have `make` available, use the manual install path below.
 
 ---
 
@@ -156,6 +173,8 @@ baofeng-logo-flasher upload-logo-serial \
 ---
 
 ## 6) Local UI usage (Streamlit)
+
+This is the **ideal/primary workflow** for most users.
 
 ### Launch methods
 
