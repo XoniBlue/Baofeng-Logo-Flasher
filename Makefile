@@ -1,102 +1,114 @@
-# Baofeng Logo Flasher - Development Makefile
+# Baofeng Logo Flasher - Reproducible Makefile
 
-.PHONY: start stop restart status test install clean help shell serve
+.PHONY: help ensure-venv install start stop restart status serve test clean
 
-# Virtual environment paths
-VENV := ./.venv
+VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 STREAMLIT := $(VENV)/bin/streamlit
-ACTIVATE := source $(VENV)/bin/activate
+APP := src/baofeng_logo_flasher/streamlit_ui.py
+RUN_DIR := .run
+PID_FILE := $(RUN_DIR)/streamlit.pid
+LOG_FILE := $(RUN_DIR)/streamlit.log
 
-# Default target
+# ANSI colors for informative output
+BLUE := \033[1;34m
+GREEN := \033[1;32m
+YELLOW := \033[1;33m
+RED := \033[1;31m
+CYAN := \033[1;36m
+RESET := \033[0m
+
 help:
-	@echo "Baofeng Logo Flasher - Available Commands:"
-	@echo ""
-	@echo "  make start    - Activate venv & start server (background)"
-	@echo "  make stop     - Stop server & deactivate venv"
-	@echo "  make restart  - Stop and start again"
-	@echo "  make serve    - Run in foreground (Ctrl+C to stop)"
-	@echo "  make status   - Check if server is running"
-	@echo "  make test     - Run the test suite"
-	@echo "  make install  - Create venv and install dependencies"
-	@echo "  make clean    - Remove cache and temp files"
-	@echo "  make shell    - Open interactive shell with venv"
-	@echo ""
+	@printf "$(BLUE)Baofeng Logo Flasher - Available commands$(RESET)\n\n"
+	@printf "  $(CYAN)make install$(RESET)    Create venv and install project deps (ui+dev)\n"
+	@printf "  $(CYAN)make start$(RESET)      Start Streamlit in background (PID/log tracked)\n"
+	@printf "  $(CYAN)make stop$(RESET)       Stop tracked Streamlit process\n"
+	@printf "  $(CYAN)make restart$(RESET)    Restart tracked Streamlit process\n"
+	@printf "  $(CYAN)make status$(RESET)     Show tracked Streamlit status\n"
+	@printf "  $(CYAN)make serve$(RESET)      Run Streamlit in foreground\n"
+	@printf "  $(CYAN)make test$(RESET)       Run pytest\n"
+	@printf "  $(CYAN)make clean$(RESET)      Remove cache/temp/runtime files\n\n"
 
-# Start the Streamlit server (background, with venv)
-# NOTE: Requires 'ui' extra: pip install -e ".[ui]"
-start:
-	@echo "🔄 Activating virtual environment..."
-	@echo "🚀 Starting Streamlit server..."
-	@PYTHONPATH=src $(STREAMLIT) run src/baofeng_logo_flasher/streamlit_ui.py --logger.level=error &
+ensure-venv:
+	@test -x $(PYTHON) || (printf "$(RED)✗ Virtual env missing.$(RESET) Run: $(CYAN)make install$(RESET)\n"; exit 1)
+
+install:
+	@printf "$(BLUE)📦 Setting up virtual environment...$(RESET)\n"
+	@test -d $(VENV) || python3 -m venv $(VENV)
+	@$(PYTHON) -m pip install --upgrade pip
+	@$(PIP) install -e ".[ui,dev]"
+	@printf "$(GREEN)✓ Environment ready.$(RESET) Run: $(CYAN)make start$(RESET)\n"
+
+start: ensure-venv
+	@printf "$(BLUE)🚀 Starting Streamlit server...$(RESET)\n"
+	@mkdir -p $(RUN_DIR)
+	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+		printf "$(YELLOW)⚠ Streamlit already running$(RESET) (PID $$(cat $(PID_FILE))).\n"; \
+		printf "  URL: $(CYAN)http://localhost:8501$(RESET)\n"; \
+		exit 0; \
+	fi
+	@rm -f $(PID_FILE)
+	@nohup env PYTHONPATH=src $(STREAMLIT) run $(APP) --logger.level=error > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE)
 	@sleep 2
-	@echo "✓ venv activated, server running at http://localhost:8501"
-	@echo ""
-	@echo "To stop: make stop"
-
-# Run in foreground (Ctrl+C to stop)
-serve:
-	@echo "🔄 Activating virtual environment..."
-	@echo "🚀 Starting Streamlit server (foreground)..."
-	@echo "   Press Ctrl+C to stop"
-	@echo ""
-	@PYTHONPATH=src $(STREAMLIT) run src/baofeng_logo_flasher/streamlit_ui.py
-	@echo ""
-	@echo "✓ Server stopped, venv deactivated"
-
-# Stop the Streamlit server
-stop:
-	@echo "🛑 Stopping Streamlit server..."
-	@pkill -f streamlit 2>/dev/null && echo "✓ Server stopped" || echo "⚠ No server was running"
-	@echo "✓ Virtual environment deactivated"
-
-# Restart the server
-restart: stop
-	@sleep 1
-	@$(MAKE) start
-
-# Check server status
-status:
-	@if pgrep -f streamlit > /dev/null; then \
-		echo "✓ Streamlit is running (PID: $$(pgrep -f streamlit))"; \
-		echo "  URL: http://localhost:8501"; \
-		echo "  venv: active"; \
+	@if kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+		printf "$(GREEN)✓ Streamlit started$(RESET) (PID $$(cat $(PID_FILE))).\n"; \
+		printf "  URL: $(CYAN)http://localhost:8501$(RESET)\n"; \
+		printf "  Log: $(CYAN)$(LOG_FILE)$(RESET)\n"; \
 	else \
-		echo "✗ Streamlit is not running"; \
-		echo "  venv: inactive"; \
+		printf "$(RED)✗ Failed to start Streamlit.$(RESET) Check: $(CYAN)$(LOG_FILE)$(RESET)\n"; \
+		rm -f $(PID_FILE); \
+		exit 1; \
 	fi
 
-# Run tests (with venv)
-test:
-	@echo "🔄 Activating virtual environment..."
-	@echo "🧪 Running tests..."
-	@PYTHONPATH=src $(PYTHON) -m pytest tests/ -v
-	@echo "✓ Tests complete, venv deactivated"
+stop:
+	@printf "$(BLUE)🛑 Stopping Streamlit server...$(RESET)\n"
+	@if [ -f $(PID_FILE) ]; then \
+		PID=$$(cat $(PID_FILE)); \
+		if kill -0 $$PID 2>/dev/null; then \
+			kill $$PID; \
+			sleep 1; \
+			if kill -0 $$PID 2>/dev/null; then kill -9 $$PID; fi; \
+			printf "$(GREEN)✓ Stopped Streamlit$(RESET) (PID $$PID).\n"; \
+		else \
+			printf "$(YELLOW)⚠ Stale PID file removed$(RESET) ($(PID_FILE)).\n"; \
+		fi; \
+		rm -f $(PID_FILE); \
+	else \
+		printf "$(YELLOW)⚠ No tracked Streamlit process.$(RESET)\n"; \
+	fi
 
-# Install dependencies (creates venv if needed)
-install:
-	@echo "📦 Setting up virtual environment..."
-	@test -d $(VENV) || python3 -m venv $(VENV)
-	@echo "📦 Installing dependencies (CLI + UI + dev)..."
-	@bash -c '$(ACTIVATE) && pip install -e ".[ui,dev]"'
-	@echo "✓ Virtual environment ready!"
-	@echo ""
-	@echo "Run 'make start' to launch the web UI"
-	@echo "Run 'baofeng-logo-flasher --help' to use CLI"
+restart: stop start
 
-# Open interactive shell with venv activated
-shell:
-	@echo "🐚 Opening shell with venv activated..."
-	@echo "   Type 'exit' to deactivate and return"
-	@bash --rcfile <(echo 'source $(VENV)/bin/activate && PS1="(venv) \w $$ "')
-	@echo "✓ venv deactivated"
+status:
+	@if [ -f $(PID_FILE) ]; then \
+		PID=$$(cat $(PID_FILE)); \
+		if kill -0 $$PID 2>/dev/null; then \
+			printf "$(GREEN)✓ Running$(RESET) (PID $$PID)\n"; \
+			printf "  URL: $(CYAN)http://localhost:8501$(RESET)\n"; \
+			printf "  Log: $(CYAN)$(LOG_FILE)$(RESET)\n"; \
+		else \
+			printf "$(RED)✗ Not running$(RESET) (stale PID file: $(PID_FILE))\n"; \
+			exit 1; \
+		fi; \
+	else \
+		printf "$(RED)✗ Not running$(RESET)\n"; \
+		exit 1; \
+	fi
 
-# Clean cache files
+serve: ensure-venv
+	@printf "$(BLUE)🚀 Running Streamlit in foreground$(RESET) (Ctrl+C to stop).\n"
+	@env PYTHONPATH=src $(STREAMLIT) run $(APP)
+
+test: ensure-venv
+	@printf "$(BLUE)🧪 Running tests...$(RESET)\n"
+	@PYTHONPATH=src $(PYTHON) -m pytest -q
+	@printf "$(GREEN)✓ Test run complete$(RESET)\n"
+
 clean:
-	@echo "🧹 Cleaning up..."
-	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf .mypy_cache 2>/dev/null || true
-	@echo "✓ Cleaned"
+	@printf "$(BLUE)🧹 Cleaning cache and runtime files...$(RESET)\n"
+	@find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	@find . -type d -name ".pytest_cache" -prune -exec rm -rf {} +
+	@find . -type d -name "*.egg-info" -prune -exec rm -rf {} +
+	@rm -rf .mypy_cache $(RUN_DIR)
+	@printf "$(GREEN)✓ Clean complete$(RESET)\n"
