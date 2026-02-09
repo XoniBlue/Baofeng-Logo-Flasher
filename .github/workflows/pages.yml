@@ -1,10 +1,8 @@
-name: v2 Deploy Pages
+name: Deploy Pages (web-dev)
 
 on:
   push:
-    branches: ["main"]
-    paths:
-      - 'v2/**'
+    branches: ["web-dev"]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "v2-pages"
+  group: "pages-web-dev"
   cancel-in-progress: true
 
 jobs:
@@ -21,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: v2/web
+        working-directory: web
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,9 +29,9 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: v2/web/package-lock.json
+          cache-dependency-path: web/package-lock.json
 
-      - name: Install deps
+      - name: Install
         run: npm ci
 
       - name: Test
@@ -42,10 +40,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: v2/web/dist
+          path: web/dist
 
   deploy:
     needs: build
