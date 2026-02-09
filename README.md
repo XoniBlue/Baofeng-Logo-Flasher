@@ -10,7 +10,9 @@
 
 Local, safety-gated boot logo flashing for supported Baofeng radios using serial USB.
 
-**Recommended way to use this project:** the local Streamlit web GUI (`make start`, then open `http://localhost:8501`).
+> [!TIP]
+> **Recommended workflow:** use the local Streamlit web GUI.  
+> Run `make start`, then open `http://localhost:8501`.
 
 ---
 
@@ -29,11 +31,30 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 
 ---
 
+## GUI-First Quick Start
+
+| Step | Action |
+|---|---|
+| 1 | `git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git` |
+| 2 | `cd Baofeng-Logo-Flasher` |
+| 3 | `make install` |
+| 4 | `make start` |
+| 5 | Open `http://localhost:8501` |
+
+```bash
+git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
+cd Baofeng-Logo-Flasher
+make install
+make start
+```
+
+---
+
 ## 1) Project overview
 
 Baofeng Logo Flasher prepares and flashes a boot logo to compatible radios over a local serial connection.
 
-### Why this project exists
+### Story: Why this exists
 
 This project started from a practical need on macOS: running the Baofeng CPS workflow in Wine was not successful, and there was no Windows machine or interest in running a Windows VM just to flash a logo.
 
@@ -92,7 +113,7 @@ If you do not have `make` available, use the manual install path below.
 
 ## 4) Installation
 
-### Option A: Makefile setup (recommended)
+### Option A: Makefile setup (recommended, GUI-first)
 
 ```bash
 git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
@@ -103,6 +124,11 @@ make install
 `make install` will:
 - create `.venv` if missing
 - install project dependencies including UI and dev extras (`.[ui,dev]`)
+
+`make start` / `make serve` require:
+- `make`
+- a POSIX shell (`bash`/`sh`)
+- Python available as `python3`
 
 ### Option B: Manual virtual environment
 
@@ -130,6 +156,9 @@ baofeng-logo-flasher --help
 ---
 
 ## 5) CLI usage
+
+> [!NOTE]
+> CLI is fully supported, but the web GUI is the primary path for first-time users.
 
 ### Discover ports and models
 
@@ -178,25 +207,25 @@ This is the **ideal/primary workflow** for most users.
 
 ### Launch methods
 
-Background mode:
+`🟢 Background mode`
 
 ```bash
 make start
 ```
 
-Foreground mode:
+`🟡 Foreground mode`
 
 ```bash
 make serve
 ```
 
-Console script:
+`🔵 Console script`
 
 ```bash
 baofeng-logo-flasher-ui
 ```
 
-Direct Streamlit command:
+`🧪 Direct Streamlit command`
 
 ```bash
 PYTHONPATH=src streamlit run src/baofeng_logo_flasher/streamlit_ui.py
