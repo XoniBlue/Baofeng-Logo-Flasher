@@ -12,11 +12,9 @@ import streamlit as st
 
 from baofeng_logo_flasher.core.messages import (
     MessageLevel,
-    WarningCode,
     WarningItem,
     warnings_from_strings,
     result_to_warnings,
-    COMMON_WARNINGS,
 )
 from baofeng_logo_flasher.core.results import OperationResult
 from baofeng_logo_flasher.core.safety import SafetyContext, CONFIRMATION_TOKEN

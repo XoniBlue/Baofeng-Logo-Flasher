@@ -32,12 +32,9 @@ except ImportError as e:
     )
     sys.exit(1)
 
-from baofeng_logo_flasher.logo_codec import LogoCodec, BitmapFormat
 from baofeng_logo_flasher.boot_logo import (
     SERIAL_FLASH_CONFIGS,
-    convert_bmp_to_raw,
     convert_raw_to_bmp,
-    flash_logo as _boot_logo_flash,
     list_serial_ports,
     read_logo,
     read_radio_id,
@@ -48,13 +45,8 @@ from baofeng_logo_flasher.core.safety import (
     WritePermissionError,
     create_streamlit_safety_context,
 )
-from baofeng_logo_flasher.core.results import OperationResult
 from baofeng_logo_flasher.core.messages import (
-    WarningItem,
-    WarningCode,
-    MessageLevel,
     result_to_warnings,
-    COMMON_WARNINGS,
 )
 from baofeng_logo_flasher.core.actions import flash_logo_serial
 

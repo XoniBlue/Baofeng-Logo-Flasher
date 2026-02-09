@@ -197,6 +197,7 @@ class TestA5Protocol:
         assert config.get("baudrate") == 115200
         assert config.get("chunk_size") == 1024
         assert config.get("write_addr_mode") == "chunk"
+        assert config.get("pixel_order") == "rgb"
 
     def test_uv17r_has_a5_protocol(self):
         """UV-17R should also use A5 protocol."""
@@ -204,6 +205,7 @@ class TestA5Protocol:
         config = SERIAL_FLASH_CONFIGS["UV-17R"]
         assert config.get("protocol") == "a5_logo"
         assert config.get("write_addr_mode") == "chunk"
+        assert config.get("pixel_order") == "rgb"
 
 
 class TestReadLogoSupport:

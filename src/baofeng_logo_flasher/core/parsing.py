@@ -9,7 +9,6 @@ from typing import Optional
 from baofeng_logo_flasher.logo_codec import (
     BitmapFormat,
     parse_bitmap_format as _parse_bitmap_format_core,
-    BITMAP_FORMAT_ALIASES,
 )
 
 
@@ -73,32 +72,3 @@ def parse_bitmap_format(value: str) -> BitmapFormat:
         ValueError: If format is not recognized.
     """
     return _parse_bitmap_format_core(value)
-
-
-def get_valid_bitmap_formats() -> list:
-    """Get list of valid bitmap format strings."""
-    return sorted(BITMAP_FORMAT_ALIASES.keys())
-
-
-def parse_size(value: str) -> tuple:
-    """
-    Parse size string in WxH format.
-
-    Args:
-        value: Size string like "128x64" or "160x128"
-
-    Returns:
-        Tuple of (width, height)
-
-    Raises:
-        ValueError: If format is invalid
-    """
-    try:
-        parts = value.lower().split('x')
-        if len(parts) != 2:
-            raise ValueError()
-        return (int(parts[0]), int(parts[1]))
-    except ValueError:
-        raise ValueError(
-            f"Invalid size format '{value}'. Use WxH format like '128x64'."
-        )

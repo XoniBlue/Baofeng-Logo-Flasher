@@ -169,6 +169,8 @@ _MODEL_REGISTRY: Dict[str, ModelConfig] = {}
 
 def _register_model(config: ModelConfig) -> None:
     """Register a model configuration."""
+    if config.name in _MODEL_REGISTRY:
+        raise ValueError(f"Duplicate model registration: {config.name}")
     _MODEL_REGISTRY[config.name] = config
 
 
@@ -304,18 +306,6 @@ def _init_registry() -> None:
             "Logo region not yet mapped",
             "Logo location is firmware-specific and currently unmapped",
         ],
-    ))
-
-    # UV-17R
-    _register_model(ModelConfig(
-        name="UV-17R",
-        vendor="Baofeng",
-        protocol=Protocol.UV17PRO,
-        baud_rate=115200,
-        magic_bytes=b"PROGRAMBFNORMALU",
-        ident_matchers=[],
-        logo_regions=[],
-        notes=["Logo region not yet mapped"],
     ))
 
     # UV-17R Pro

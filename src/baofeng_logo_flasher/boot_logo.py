@@ -58,16 +58,13 @@ from .bmp_utils import (
 )
 from .protocol import UV5RMProtocol, RadioBlockError, RadioTransportError
 
-# Import model registry for unified config
-try:
-    from .models import (
-        get_model as registry_get_model,
-        get_serial_flash_config as registry_get_flash_config,
-        LogoRegion as RegistryLogoRegion,
-    )
-    _HAS_REGISTRY = True
-except ImportError:
-    _HAS_REGISTRY = False
+# Import model registry for unified config.
+# Registry is required for runtime configuration.
+from .models import (
+    get_model as registry_get_model,
+    get_serial_flash_config as registry_get_flash_config,
+    list_models as registry_list_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,79 +85,72 @@ class BootLogoModelConfig:
     scan_ranges: List[Tuple[int, int]]
 
 
-MODEL_CONFIGS: Dict[str, BootLogoModelConfig] = {
-    "UV-5RH Pro": BootLogoModelConfig(
-        name="UV-5RH Pro",
-        logo_region=None,
-        scan_ranges=[],
-    ),
-    "UV-17R": BootLogoModelConfig(
-        name="UV-17R",
-        logo_region=None,
-        scan_ranges=[],
-    ),
-    "UV-17R Pro": BootLogoModelConfig(
-        name="UV-17R Pro",
-        logo_region=None,
-        scan_ranges=[],
-    ),
-}
+def _build_model_configs() -> Dict[str, BootLogoModelConfig]:
+    """Build clone/discovery model configs from registry when available."""
+    # Keep explicit clone/discovery targets to preserve prior UX.
+    model_names = ("UV-5RH Pro", "UV-17R", "UV-17R Pro")
+    result: Dict[str, BootLogoModelConfig] = {}
+    for name in model_names:
+        reg_config = registry_get_model(name)
+        if reg_config is None:
+            raise RuntimeError(f"Required model missing from registry: {name}")
+        result[name] = BootLogoModelConfig(
+            name=reg_config.name,
+            logo_region=None,
+            scan_ranges=[],
+        )
+    return result
 
-# Serial flashing protocol configs for direct boot logo flashing
-# UV-5RM and UV-17Pro use the A5 framing logo protocol at 115200 baud.
-#
-# Protocol reference: LOGO_PROTOCOL.md from T6UV Series CPS Logo Tool capture.
-#
-# Supported radios:
-# - UV-5RM: Uses A5 logo protocol, 160x128 RGB565
-# - UV-17Pro: Uses A5 logo protocol, 160x128 RGB565
-SERIAL_FLASH_CONFIGS: Dict[str, Dict] = {
-    "UV-5RM": {
-        "size": (160, 128),
-        "color_mode": "RGB565",
-        "protocol": "a5_logo",  # New A5 framing logo protocol
-        "write_addr_mode": "chunk",  # CMD_WRITE addr increments by chunk index
-        "baudrate": 115200,
-        "timeout": 2.0,
-        "chunk_size": 1024,
-        "handshake": b"PROGRAMBFNORMALU",
-        "handshake_ack": b"\x06",
-    },
-    "UV-17Pro": {
-        "size": (160, 128),
-        "color_mode": "RGB565",
-        "protocol": "a5_logo",
-        "write_addr_mode": "chunk",
-        "baudrate": 115200,
-        "timeout": 2.0,
-        "chunk_size": 1024,
-        "handshake": b"PROGRAMBFNORMALU",
-        "handshake_ack": b"\x06",
-    },
-    "UV-17R": {
-        "size": (160, 128),
-        "color_mode": "RGB565",
-        "protocol": "a5_logo",
-        "write_addr_mode": "chunk",
-        "baudrate": 115200,
-        "timeout": 2.0,
-        "chunk_size": 1024,
-        "handshake": b"PROGRAMBFNORMALU",
-        "handshake_ack": b"\x06",
-    },
-    # Legacy config for unsupported radios (not tested)
-    "DM-32UV": {
-        "size": (240, 320),
-        "color_mode": "RGB",
-        "protocol": "legacy",
-        "encrypt": False,
-        "start_addr": 0x2000,
-        "magic": b"\x50\xBB\xFF\x20\x12\x07\x25",
-        "block_size": 64,
-        "baudrate": 9600,
-        "timeout": 3.0,
-    },
-}
+
+def _build_serial_flash_configs() -> Dict[str, Dict]:
+    """Build serial flash configs from registry, with protocol metadata overlay."""
+    result: Dict[str, Dict] = {}
+    for name in registry_list_models():
+        reg_model = registry_get_model(name)
+        if reg_model is None or not reg_model.logo_regions:
+            continue
+
+        cfg = registry_get_flash_config(name)
+        if not cfg:
+            continue
+
+        normalized = dict(cfg)
+        protocol_name = getattr(reg_model.protocol, "value", "").lower()
+        if protocol_name == "uv17pro":
+            normalized.update(
+                {
+                    "protocol": "a5_logo",
+                    "write_addr_mode": "chunk",
+                    "chunk_size": 1024,
+                    "pixel_order": "rgb",
+                    "handshake": b"PROGRAMBFNORMALU",
+                    "handshake_ack": b"\x06",
+                }
+            )
+        else:
+            normalized.setdefault("protocol", "legacy")
+
+        required = ("size", "color_mode", "start_addr", "baudrate", "timeout", "protocol")
+        missing = [k for k in required if k not in normalized]
+        if missing:
+            raise RuntimeError(
+                f"Registry-derived serial config for '{name}' missing keys: {', '.join(missing)}"
+            )
+
+        result[name] = normalized
+
+    required_models = ("UV-5RM", "UV-17Pro", "UV-17R", "DM-32UV")
+    for model_name in required_models:
+        if model_name not in result:
+            raise RuntimeError(
+                f"Required serial flash model missing from registry-derived configs: {model_name}"
+            )
+
+    return result
+
+
+MODEL_CONFIGS: Dict[str, BootLogoModelConfig] = _build_model_configs()
+SERIAL_FLASH_CONFIGS: Dict[str, Dict] = _build_serial_flash_configs()
 
 
 class BootLogoError(Exception):
@@ -550,6 +540,10 @@ def _flash_logo_a5_protocol(
             return f"Simulation: Would upload image to {port} (could not read: {e})"
 
     logger.info(f"Flashing logo using A5 protocol to {port}")
+    pixel_order = str(config.get("pixel_order", "rgb")).lower()
+    if pixel_order not in {"rgb", "bgr"}:
+        raise BootLogoError(f"Invalid pixel_order in config: {pixel_order}")
+
     return protocol_upload_logo(
         port,
         bmp_path,
@@ -558,6 +552,7 @@ def _flash_logo_a5_protocol(
         debug_bytes=debug_bytes,
         debug_output_dir=debug_output_dir,
         address_mode=write_address_mode,
+        pixel_order=pixel_order,
     )
 
 
@@ -900,29 +895,26 @@ class BootLogoService:
         self.protocol = protocol
 
     def resolve_model_config(self, model_name: str) -> BootLogoModelConfig:
-        """Resolve model configuration, checking registry first."""
-        # Check legacy MODEL_CONFIGS first for backward compatibility
+        """Resolve model configuration from registry-derived cache."""
         if model_name in MODEL_CONFIGS:
             return MODEL_CONFIGS[model_name]
 
-        # Try registry if available
-        if _HAS_REGISTRY:
-            reg_config = registry_get_model(model_name)
-            if reg_config:
-                # Convert registry config to BootLogoModelConfig
-                logo_region = None
-                if reg_config.logo_regions:
-                    r = reg_config.logo_regions[0]
-                    logo_region = LogoRegion(
-                        start=r.start_addr,
-                        length=r.length,
-                        block_size=r.block_size,
-                    )
-                return BootLogoModelConfig(
-                    name=reg_config.name,
-                    logo_region=logo_region,
-                    scan_ranges=[],
+        reg_config = registry_get_model(model_name)
+        if reg_config:
+            # Convert registry config to BootLogoModelConfig
+            logo_region = None
+            if reg_config.logo_regions:
+                r = reg_config.logo_regions[0]
+                logo_region = LogoRegion(
+                    start=r.start_addr,
+                    length=r.length,
+                    block_size=r.block_size,
                 )
+            return BootLogoModelConfig(
+                name=reg_config.name,
+                logo_region=logo_region,
+                scan_ranges=[],
+            )
 
         raise BootLogoError(f"Unsupported model: {model_name}")
 

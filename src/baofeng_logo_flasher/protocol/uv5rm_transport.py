@@ -437,21 +437,3 @@ class UV5RMTransport:
             raise
         except Exception as e:
             raise RadioBlockError(f"Block write error at {addr:04X}: {e}")
-
-
-# Convenient module-level shortcuts
-def open_serial(port: str, baudrate: int = 9600, timeout: float = 1.5) -> UV5RMTransport:
-    """
-    Open a radio transport connection.
-    
-    Args:
-        port: Serial port name
-        baudrate: Baud rate (default 9600)
-        timeout: Timeout in seconds (default 1.5)
-        
-    Returns:
-        UV5RMTransport instance (already open)
-    """
-    transport = UV5RMTransport(port, baudrate, timeout)
-    transport.open()
-    return transport

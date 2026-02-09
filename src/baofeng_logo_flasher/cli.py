@@ -27,15 +27,9 @@ from baofeng_logo_flasher.boot_logo import (
     BootLogoError,
 )
 from baofeng_logo_flasher.bmp_utils import validate_bmp_bytes
-from baofeng_logo_flasher.logo_codec import (
-    BitmapFormat,
-)
 
 # Import from core module for unified logic
-from baofeng_logo_flasher.core.parsing import (
-    parse_offset as _parse_offset_core,
-    parse_bitmap_format as _parse_bitmap_format_core,
-)
+from baofeng_logo_flasher.core.parsing import parse_offset as _parse_offset_core
 from baofeng_logo_flasher.core.safety import (
     SafetyContext,
     require_write_permission,
@@ -43,14 +37,12 @@ from baofeng_logo_flasher.core.safety import (
     CONFIRMATION_TOKEN,
     create_cli_safety_context,
 )
-from baofeng_logo_flasher.core.results import OperationResult
 from baofeng_logo_flasher.core.actions import (
     flash_logo_serial as core_flash_logo_serial,
 )
 from baofeng_logo_flasher.core.messages import (
     WarningItem,
     MessageLevel,
-    result_to_warnings,
 )
 from baofeng_logo_flasher.models import (
     get_model as registry_get_model,
@@ -112,13 +104,6 @@ def print_structured_warning(warning: WarningItem, verbose: bool = False) -> Non
         console.print(f"   → {warning.remediation}", style="cyan")
 
 
-def print_warnings_from_result(result: OperationResult, verbose: bool = False) -> None:
-    """Print all warnings from an OperationResult using structured format."""
-    warnings = result_to_warnings(result)
-    for warning in warnings:
-        print_structured_warning(warning, verbose=verbose)
-
-
 def parse_int(value: Optional[str], label: str) -> Optional[int]:
     """Parse an integer from string (supports decimal and hex)."""
     if value is None:
@@ -129,44 +114,6 @@ def parse_int(value: Optional[str], label: str) -> Optional[int]:
         return int(value)
     except ValueError:
         raise typer.BadParameter(f"Invalid {label}: {value}")
-
-
-def parse_offset(value: Optional[str]) -> Optional[int]:
-    """
-    Parse offset value from string, supporting multiple formats.
-
-    CLI wrapper around core.parsing.parse_offset that converts
-    ValueError to typer.BadParameter for proper CLI error handling.
-    """
-    try:
-        return _parse_offset_core(value)
-    except ValueError as e:
-        raise typer.BadParameter(str(e))
-
-
-def parse_bitmap_format(value: str) -> BitmapFormat:
-    """
-    Parse bitmap format from user-friendly string.
-
-    CLI wrapper around logo_codec.parse_bitmap_format that converts
-    ValueError to typer.BadParameter for proper CLI error handling.
-
-    Accepts canonical enum names and friendly aliases:
-        - "ROW_MAJOR_MSB" or "row_msb" or "row-major-msb"
-        - "ROW_MAJOR_LSB" or "row_lsb" or "row-major-lsb"
-        - "PAGE_MAJOR_MSB" or "page_msb" or "page-major-msb"
-        - "PAGE_MAJOR_LSB" or "page_lsb" or "page-major-lsb"
-
-    Returns:
-        Corresponding BitmapFormat enum value.
-
-    Raises:
-        typer.BadParameter: If format is not recognized.
-    """
-    try:
-        return _parse_bitmap_format_core(value)
-    except ValueError as e:
-        raise typer.BadParameter(str(e))
 
 
 def confirm_write_with_details(
@@ -295,14 +242,6 @@ def confirm_write_with_details(
             print_error("Cannot write to radio with unknown model. Aborting for safety.")
         else:
             print_warning(str(e))
-        raise typer.Abort()
-
-
-def confirm_write(force: bool, prompt: str) -> None:
-    """Legacy confirmation helper (simple yes/no). Deprecated for radio writes."""
-    if force:
-        return
-    if not typer.confirm(prompt):
         raise typer.Abort()
 
 

@@ -69,17 +69,6 @@ def parse_bitmap_format(value: str) -> BitmapFormat:
     )
 
 
-def get_format_display_name(fmt: BitmapFormat) -> str:
-    """Get user-friendly display name for a bitmap format."""
-    names = {
-        BitmapFormat.ROW_MAJOR_MSB: "Row-Major MSB (most common)",
-        BitmapFormat.ROW_MAJOR_LSB: "Row-Major LSB",
-        BitmapFormat.PAGE_MAJOR_MSB: "Page-Major MSB (SSD1306)",
-        BitmapFormat.PAGE_MAJOR_LSB: "Page-Major LSB",
-    }
-    return names.get(fmt, fmt.value)
-
-
 class LogoCodec:
     """Encode/decode logo images to/from packed bitmap format."""
 

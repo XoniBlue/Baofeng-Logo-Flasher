@@ -47,7 +47,6 @@ CMD_DATA_ACK = 0xEE
 
 # Addresses
 ADDR_CONFIG = 0x4504
-ADDR_IMAGE_BASE = 0x0000
 
 # Image specs
 IMAGE_WIDTH = 160
@@ -194,28 +193,33 @@ def parse_response(data: bytes) -> Tuple[int, int, int, bytes]:
     return cmd, addr, length, payload
 
 
-def rgb888_to_bgr565(r: int, g: int, b: int) -> int:
+def rgb888_to_rgb565(r: int, g: int, b: int) -> int:
     """
-    Convert RGB888 to BGR565 format (what the radio expects).
+    Convert RGB888 to RGB565 format.
 
-    BGR565 bit layout: BBBBBGGGGGGRRRRR
+    RGB565 bit layout: RRRRRGGGGGGBBBBB
     """
     r5 = (r >> 3) & 0x1F
     g6 = (g >> 2) & 0x3F
     b5 = (b >> 3) & 0x1F
-    return (b5 << 11) | (g6 << 5) | r5
+    return (r5 << 11) | (g6 << 5) | b5
 
 
-def convert_image_to_rgb565(image_path: str, size: Tuple[int, int] = (160, 128)) -> bytes:
+def convert_image_to_rgb565(
+    image_path: str,
+    size: Tuple[int, int] = (160, 128),
+    pixel_order: Literal["rgb", "bgr"] = "rgb",
+) -> bytes:
     """
-    Convert an image file to BGR565 format suitable for the radio.
+    Convert an image file to 565 format suitable for the radio.
 
     Args:
         image_path: Path to image file (PNG, JPG, BMP, etc.)
         size: Target dimensions (width, height)
+        pixel_order: 16-bit channel order ("rgb" for RGB565, "bgr" for BGR565)
 
     Returns:
-        Raw BGR565 bytes in little-endian format
+        Raw 565 bytes in little-endian format
     """
     from PIL import Image
 
@@ -223,16 +227,26 @@ def convert_image_to_rgb565(image_path: str, size: Tuple[int, int] = (160, 128))
     img = img.convert("RGB")
     img = img.resize(size, Image.Resampling.LANCZOS)
 
+    if pixel_order not in {"rgb", "bgr"}:
+        raise ValueError(f"Unsupported pixel_order: {pixel_order}")
+
     # No vertical flip - radio reads top-to-bottom
-    # Convert to BGR565 little-endian
+    # Convert to 565 little-endian
     raw_data = bytearray()
     for y in range(size[1]):
         for x in range(size[0]):
             r, g, b = img.getpixel((x, y))
-            bgr565 = rgb888_to_bgr565(r, g, b)
+            if pixel_order == "rgb":
+                val565 = rgb888_to_rgb565(r, g, b)
+            else:
+                # BGR565: BBBBBGGGGGGRRRRR
+                r5 = (r >> 3) & 0x1F
+                g6 = (g >> 2) & 0x3F
+                b5 = (b >> 3) & 0x1F
+                val565 = (b5 << 11) | (g6 << 5) | r5
             # Little-endian: low byte first
-            raw_data.append(bgr565 & 0xFF)
-            raw_data.append((bgr565 >> 8) & 0xFF)
+            raw_data.append(val565 & 0xFF)
+            raw_data.append((val565 >> 8) & 0xFF)
 
     return bytes(raw_data)
 
@@ -241,9 +255,10 @@ def render_rgb565_payload_row_major(
     image_data: bytes,
     width: int = IMAGE_WIDTH,
     height: int = IMAGE_HEIGHT,
+    pixel_order: Literal["rgb", "bgr"] = "rgb",
 ) -> "Image.Image":
     """
-    Render row-major little-endian BGR565 payload back to an RGB PIL image.
+    Render row-major little-endian 565 payload back to an RGB PIL image.
     """
     from PIL import Image
 
@@ -261,10 +276,16 @@ def render_rgb565_payload_row_major(
             val = payload[i] | (payload[i + 1] << 8)
             i += 2
 
-            # BGR565: BBBBB GGGGGG RRRRR
-            b5 = (val >> 11) & 0x1F
-            g6 = (val >> 5) & 0x3F
-            r5 = val & 0x1F
+            if pixel_order == "rgb":
+                # RGB565: RRRRR GGGGGG BBBBB
+                r5 = (val >> 11) & 0x1F
+                g6 = (val >> 5) & 0x3F
+                b5 = val & 0x1F
+            else:
+                # BGR565: BBBBB GGGGGG RRRRR
+                b5 = (val >> 11) & 0x1F
+                g6 = (val >> 5) & 0x3F
+                r5 = val & 0x1F
 
             r = (r5 << 3) | (r5 >> 2)
             g = (g6 << 2) | (g6 >> 4)
@@ -280,6 +301,7 @@ def dump_logo_debug_artifacts(
     output_dir: str,
     max_hex_bytes: int = 256,
     address_mode: str = "byte",
+    pixel_order: str = "rgb",
 ) -> Path:
     """
     Dump deterministic byte artifacts for protocol comparisons/debugging.
@@ -298,12 +320,18 @@ def dump_logo_debug_artifacts(
     frames_path.write_bytes(b"".join(frame for _, _, frame in write_frames))
 
     preview_path = out_dir / "preview_row_major.png"
-    render_rgb565_payload_row_major(image_data, IMAGE_WIDTH, IMAGE_HEIGHT).save(preview_path)
+    render_rgb565_payload_row_major(
+        image_data,
+        IMAGE_WIDTH,
+        IMAGE_HEIGHT,
+        pixel_order=pixel_order,
+    ).save(preview_path)
 
     manifest = {
         "image_bytes": len(image_data),
         "chunk_size": CHUNK_SIZE,
         "address_mode": address_mode,
+        "pixel_order": pixel_order,
         "frame_count": len(write_frames),
         "first_offsets": [offset for offset, _, _ in write_frames[:8]],
         "payload_sha256": hashlib.sha256(image_data).hexdigest(),
@@ -593,6 +621,7 @@ class LogoUploader:
         debug_bytes: bool = False,
         debug_output_dir: Optional[str] = None,
         address_mode: Literal["byte", "chunk"] = "byte",
+        pixel_order: Literal["rgb", "bgr"] = "rgb",
     ) -> str:
         """
         Complete logo upload workflow.
@@ -609,7 +638,11 @@ class LogoUploader:
 
             # Convert image to RGB565
             logger.info(f"Converting image to RGB565 ({IMAGE_WIDTH}x{IMAGE_HEIGHT})...")
-            image_data = convert_image_to_rgb565(image_path, (IMAGE_WIDTH, IMAGE_HEIGHT))
+            image_data = convert_image_to_rgb565(
+                image_path,
+                (IMAGE_WIDTH, IMAGE_HEIGHT),
+                pixel_order=pixel_order,
+            )
 
             if len(image_data) != IMAGE_BYTES:
                 raise LogoProtocolError(
@@ -629,6 +662,7 @@ class LogoUploader:
                     frames,
                     out_dir,
                     address_mode=address_mode,
+                    pixel_order=pixel_order,
                 )
                 logger.info("Wrote debug byte artifacts to %s", manifest_path.parent)
 
@@ -655,6 +689,7 @@ def upload_logo(
     debug_bytes: bool = False,
     debug_output_dir: Optional[str] = None,
     address_mode: Literal["byte", "chunk"] = "byte",
+    pixel_order: Literal["rgb", "bgr"] = "rgb",
 ) -> str:
     """
     Convenience function to upload a boot logo.
@@ -684,4 +719,5 @@ def upload_logo(
         debug_bytes=debug_bytes,
         debug_output_dir=debug_output_dir,
         address_mode=address_mode,
+        pixel_order=pixel_order,
     )

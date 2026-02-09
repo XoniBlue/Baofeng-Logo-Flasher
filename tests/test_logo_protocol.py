@@ -46,7 +46,7 @@ def test_build_write_frames_have_expected_len_and_offsets() -> None:
 
 
 def test_convert_image_to_rgb565_golden_vector_first_8_bytes(tmp_path) -> None:
-    """Golden vector for known 2x2 RGB values (BGR565 little-endian)."""
+    """Golden vector for known 2x2 RGB values (RGB565 little-endian)."""
     img = Image.new("RGB", (2, 2))
     img.putdata(
         [
@@ -61,9 +61,21 @@ def test_convert_image_to_rgb565_golden_vector_first_8_bytes(tmp_path) -> None:
 
     out = convert_image_to_rgb565(str(path), size=(2, 2))
 
-    # BGR565 little-endian:
-    # red   -> 0x001F -> 1f 00
+    # RGB565 little-endian:
+    # red   -> 0xF800 -> 00 f8
     # green -> 0x07E0 -> e0 07
-    # blue  -> 0xF800 -> 00 f8
+    # blue  -> 0x001F -> 1f 00
     # white -> 0xFFFF -> ff ff
-    assert out[:8] == bytes([0x1F, 0x00, 0xE0, 0x07, 0x00, 0xF8, 0xFF, 0xFF])
+    assert out[:8] == bytes([0x00, 0xF8, 0xE0, 0x07, 0x1F, 0x00, 0xFF, 0xFF])
+
+
+def test_convert_image_to_rgb565_supports_bgr_order(tmp_path) -> None:
+    """BGR565 remains available via explicit pixel_order override."""
+    img = Image.new("RGB", (1, 1), color=(255, 0, 0))  # red
+    path = tmp_path / "one.png"
+    img.save(path)
+
+    out = convert_image_to_rgb565(str(path), size=(1, 1), pixel_order="bgr")
+
+    # red in BGR565 -> 0x001F -> 1f 00
+    assert out == bytes([0x1F, 0x00])

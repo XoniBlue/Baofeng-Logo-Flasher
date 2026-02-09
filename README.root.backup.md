@@ -28,7 +28,6 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 - [8) Safety notes](#8-safety-notes)
 - [9) Troubleshooting](#9-troubleshooting)
 - [10) Where to get help / report issues](#10-where-to-get-help--report-issues)
-- [11) Technical documentation](#11-technical-documentation)
 
 ---
 
@@ -306,23 +305,6 @@ CLI equivalent:
 ### Issues / feature requests
 
 - https://github.com/XoniBlue/Baofeng-Logo-Flasher/issues
-
----
-
-## 11) Technical documentation
-
-For deep, code-grounded documentation (architecture, runtime flow, configuration, developer internals), see:
-
-- `repodocs/README.md`
-- `repodocs/ARCHITECTURE.md`
-- `repodocs/RUNTIME_FLOW.md`
-- `repodocs/CONFIGURATION.md`
-- `repodocs/INSTALLATION.md`
-- `repodocs/USAGE_GUIDE.md`
-- `repodocs/TROUBLESHOOTING.md`
-- `repodocs/DEVELOPER_GUIDE.md`
-- `repodocs/FILE_MAP.md`
-- `repodocs/SAFETY.md`
 
 ---
 
