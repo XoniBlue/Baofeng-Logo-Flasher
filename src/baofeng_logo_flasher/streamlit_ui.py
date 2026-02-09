@@ -1026,7 +1026,7 @@ def tab_boot_logo_flasher():
     top_left, top_right = st.columns([1, 1])
 
     with top_left:
-        header_cols = st.columns([2.2, 0.9, 0.9], vertical_alignment="center")
+        header_cols = st.columns([2.2, 1.2], vertical_alignment="center")
         with header_cols[0]:
             _render_section_header("Step 1 · Connection")
         with header_cols[1]:
@@ -1037,9 +1037,6 @@ def tab_boot_logo_flasher():
                 value=st.session_state.connection_show_controls,
                 aria_label="Show controls help",
             )
-        with header_cols[2]:
-            if st.button("Scan", use_container_width=True):
-                st.session_state.connection_scan_seq += 1
 
         models = list(SERIAL_FLASH_CONFIGS.keys())
         selected_model = st.session_state.selected_model if st.session_state.selected_model in models else models[0]
@@ -1081,6 +1078,10 @@ def tab_boot_logo_flasher():
 
         show_controls = st.session_state.connection_show_controls or not ready_now
         if show_controls:
+            control_top = st.columns([1, 1.35], vertical_alignment="center")
+            with control_top[0]:
+                if st.button("Scan", use_container_width=True):
+                    st.session_state.connection_scan_seq += 1
             conn_cols = st.columns(2)
             with conn_cols[0]:
                 model = st.selectbox(
@@ -1106,12 +1107,6 @@ def tab_boot_logo_flasher():
         else:
             model = st.session_state.selected_model
             port = st.session_state.selected_port or ""
-
-        st.caption(
-            "Auto-detect signals: handshake=high, known USB-UART VID/descriptor=medium. "
-            f"Auto-probe max {AUTO_PROBE_PORT_LIMIT} ports unless you click Scan. "
-            f"{st.session_state.connection_autoselect_reason}"
-        )
 
         config = dict(SERIAL_FLASH_CONFIGS[model])
         probe = _render_connection_health(model=model, config=config, port=port, ports=ports)
