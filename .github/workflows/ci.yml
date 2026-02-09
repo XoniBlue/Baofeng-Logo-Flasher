@@ -1,44 +1,26 @@
-name: CI
+name: v2 CI
 
 on:
   push:
-    branches: ["main"]
+    paths:
+      - 'v2/**'
   pull_request:
+    paths:
+      - 'v2/**'
 
 jobs:
-  tests:
+  web:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
+    defaults:
+      run:
+        working-directory: v2/web
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Smoke test model registry wiring
-        run: python -m baofeng_logo_flasher.cli list-models
-
-      - name: Run tests
-        run: pytest
-
-      - name: Lint (ruff)
-        if: always()
-        continue-on-error: true
-        run: ruff check .
-
-      - name: Lint (black)
-        if: always()
-        continue-on-error: true
-        run: black --check .
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: v2/web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
