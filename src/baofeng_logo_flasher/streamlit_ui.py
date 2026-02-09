@@ -73,8 +73,7 @@ logger = logging.getLogger(__name__)
 BOOT_IMAGE_MAX_UPLOAD_MB = 10
 BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
 AUTO_PROBE_PORT_LIMIT = 3
-AUTO_PROBE_TIMEOUT_SEC = 0.5
-AUTO_PROBE_IDENT_MAX_ATTEMPTS = 1
+AUTO_PROBE_TIMEOUT_SEC = 1.5
 PROBE_IDENT_MAX_ATTEMPTS = 2
 PROBE_IDENT_RETRY_DELAY_SEC = 0.15
 
@@ -634,8 +633,6 @@ def _probe_radio_identity(
     model: str,
     config: dict,
     timeout_cap: float,
-    max_attempts: int = PROBE_IDENT_MAX_ATTEMPTS,
-    retry_delay_sec: float = PROBE_IDENT_RETRY_DELAY_SEC,
 ) -> dict:
     """
     Perform a non-destructive identity probe for ranking.
@@ -646,7 +643,7 @@ def _probe_radio_identity(
     """
     protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
     last_error = "Unknown error"
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(1, PROBE_IDENT_MAX_ATTEMPTS + 1):
         try:
             radio_id = read_radio_id(
                 port,
@@ -664,16 +661,16 @@ def _probe_radio_identity(
             }
         except Exception as exc:
             last_error = str(exc)
-            if attempt >= max_attempts:
+            if attempt >= PROBE_IDENT_MAX_ATTEMPTS:
                 break
             logger.info(
                 "Identity probe retry on %s (attempt %d/%d): %s",
                 port,
                 attempt + 1,
-                max_attempts,
+                PROBE_IDENT_MAX_ATTEMPTS,
                 last_error,
             )
-            time.sleep(retry_delay_sec)
+            time.sleep(PROBE_IDENT_RETRY_DELAY_SEC)
 
     # Handshake failure is treated as low/unknown confidence.
     return {
@@ -722,14 +719,7 @@ def _auto_select_port(
     handshake_failed = set()
 
     for dev in probed:
-        probe = _probe_radio_identity(
-            dev,
-            model,
-            config,
-            timeout_cap=AUTO_PROBE_TIMEOUT_SEC,
-            max_attempts=AUTO_PROBE_IDENT_MAX_ATTEMPTS,
-            retry_delay_sec=0.0,
-        )
+        probe = _probe_radio_identity(dev, model, config, timeout_cap=AUTO_PROBE_TIMEOUT_SEC)
         if probe.get("ok"):
             handshake_hits.append(dev)
         else:
@@ -923,12 +913,6 @@ def _render_connection_health(model: str, config: dict, port: str, ports: list[s
     - 4s while disconnected/not discovered
     - 12s when fully connected and discovered
     """
-    # Detect hot-plug/unplug without requiring a manual page refresh.
-    live_ports = list_serial_ports()
-    if tuple(sorted(live_ports)) != tuple(sorted(ports)):
-        st.session_state.connection_last_ports_snapshot = ()
-        st.rerun()
-
     probe = st.session_state.connection_probe
 
     freeze_target = st.session_state.connection_freeze_target
