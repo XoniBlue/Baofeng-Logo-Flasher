@@ -512,17 +512,15 @@ def tab_capabilities():
 def _process_image_for_radio(
     img: Image.Image,
     target_size: tuple,
-    resize_method: str,
     bg_color: str = "#000000"
 ) -> Image.Image:
     """
-    Process an image for radio flashing.
+    Process an image for radio flashing using deterministic stretch resize.
 
     Args:
         img: PIL Image to process
         target_size: (width, height) tuple
-        resize_method: One of "Fit (letterbox)", "Fill (stretch)", "Crop (center)"
-        bg_color: Background color for letterboxing (hex string)
+        bg_color: Background color used for alpha compositing
 
     Returns:
         Processed PIL Image at target_size
@@ -542,46 +540,8 @@ def _process_image_for_radio(
         else:
             img = img.convert("RGB")
 
-    if resize_method == "Fill (stretch)":
-        # Simple stretch to target size
-        return img.resize(target_size, Image.Resampling.LANCZOS)
-
-    elif resize_method == "Crop (center)":
-        # Resize to cover target, then center crop
-        img_ratio = img.size[0] / img.size[1]
-        target_ratio = target_size[0] / target_size[1]
-
-        if img_ratio > target_ratio:
-            # Image is wider - resize by height, crop width
-            new_height = target_size[1]
-            new_width = int(new_height * img_ratio)
-        else:
-            # Image is taller - resize by width, crop height
-            new_width = target_size[0]
-            new_height = int(new_width / img_ratio)
-
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        # Center crop
-        left = (new_width - target_size[0]) // 2
-        top = (new_height - target_size[1]) // 2
-        right = left + target_size[0]
-        bottom = top + target_size[1]
-
-        return img.crop((left, top, right, bottom))
-
-    else:  # "Fit (letterbox)" - default
-        # Resize to fit within target, letterbox the rest
-        img.thumbnail(target_size, Image.Resampling.LANCZOS)
-
-        # Create background and paste centered
-        background = Image.new("RGB", target_size, bg_color)
-        offset = (
-            (target_size[0] - img.size[0]) // 2,
-            (target_size[1] - img.size[1]) // 2,
-        )
-        background.paste(img, offset)
-        return background
+    # Fixed deterministic resize path used by this app.
+    return img.resize(target_size, Image.Resampling.LANCZOS)
 
 
 def _image_to_bmp_bytes(img: Image.Image) -> bytes:
@@ -1145,7 +1105,6 @@ def tab_boot_logo_flasher():
                     processed_img = _process_image_for_radio(
                         original_img,
                         expected_size,
-                        "Fill (stretch)",
                         "#000000",
                     )
                     st.session_state.processed_bmp = _image_to_bmp_bytes(processed_img)
