@@ -74,6 +74,8 @@ BOOT_IMAGE_MAX_UPLOAD_MB = 10
 BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
 AUTO_PROBE_PORT_LIMIT = 3
 AUTO_PROBE_TIMEOUT_SEC = 1.5
+PROBE_IDENT_MAX_ATTEMPTS = 2
+PROBE_IDENT_RETRY_DELAY_SEC = 0.15
 
 # Explicit medium-confidence criteria:
 # 1) Known USB-UART bridge VID (CP210x/CH34x/PL2303/FTDI), or
@@ -640,30 +642,44 @@ def _probe_radio_identity(
     it is not a strict model gate for A5-family flashing.
     """
     protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
-    try:
-        radio_id = read_radio_id(
-            port,
-            magic=config.get("magic"),
-            baudrate=int(config.get("baudrate", 115200)),
-            timeout=min(float(config.get("timeout", 2.0)), timeout_cap),
-            protocol=protocol,
-        )
-        return {
-            "port": port,
-            "model": model,
-            "ok": True,
-            "radio_id": radio_id,
-            "error": "",
-        }
-    except Exception as exc:
-        # Handshake failure is treated as low/unknown confidence.
-        return {
-            "port": port,
-            "model": model,
-            "ok": False,
-            "radio_id": "",
-            "error": str(exc),
-        }
+    last_error = "Unknown error"
+    for attempt in range(1, PROBE_IDENT_MAX_ATTEMPTS + 1):
+        try:
+            radio_id = read_radio_id(
+                port,
+                magic=config.get("magic"),
+                baudrate=int(config.get("baudrate", 115200)),
+                timeout=min(float(config.get("timeout", 2.0)), timeout_cap),
+                protocol=protocol,
+            )
+            return {
+                "port": port,
+                "model": model,
+                "ok": True,
+                "radio_id": radio_id,
+                "error": "",
+            }
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt >= PROBE_IDENT_MAX_ATTEMPTS:
+                break
+            logger.info(
+                "Identity probe retry on %s (attempt %d/%d): %s",
+                port,
+                attempt + 1,
+                PROBE_IDENT_MAX_ATTEMPTS,
+                last_error,
+            )
+            time.sleep(PROBE_IDENT_RETRY_DELAY_SEC)
+
+    # Handshake failure is treated as low/unknown confidence.
+    return {
+        "port": port,
+        "model": model,
+        "ok": False,
+        "radio_id": "",
+        "error": last_error,
+    }
 
 
 def _rank_ports_for_autoselect(ports: list[str], metadata: dict) -> list[str]:
