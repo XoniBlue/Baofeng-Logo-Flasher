@@ -16,6 +16,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    import serial.tools.list_ports
+except Exception:
+    serial = None
+
 # Guard streamlit import - it's an optional dependency
 try:
     import streamlit as st
@@ -67,6 +72,15 @@ logger = logging.getLogger(__name__)
 
 BOOT_IMAGE_MAX_UPLOAD_MB = 10
 BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
+AUTO_PROBE_PORT_LIMIT = 3
+AUTO_PROBE_TIMEOUT_SEC = 0.8
+PORT_SCAN_TIMEOUT_SEC = 1.0
+
+# Explicit medium-confidence criteria:
+# 1) Known USB-UART bridge VID (CP210x/CH34x/PL2303/FTDI), or
+# 2) Descriptor/manufacturer/product contains baofeng/serial/uart.
+KNOWN_BRIDGE_VIDS = {0x10C4, 0x1A86, 0x067B, 0x0403}
+MEDIUM_HINT_TOKENS = ("baofeng", "serial", "uart", "pl2303", "cp210", "ch340", "ftdi")
 
 
 def _init_session_state():
@@ -91,6 +105,14 @@ def _init_session_state():
         st.session_state.connection_show_controls = False
     if "connection_last_ready" not in st.session_state:
         st.session_state.connection_last_ready = None
+    if "connection_autoselect_reason" not in st.session_state:
+        st.session_state.connection_autoselect_reason = ""
+    if "connection_scan_seq" not in st.session_state:
+        st.session_state.connection_scan_seq = 0
+    if "connection_autoselect_seq" not in st.session_state:
+        st.session_state.connection_autoselect_seq = 0
+    if "connection_last_ports_snapshot" not in st.session_state:
+        st.session_state.connection_last_ports_snapshot = ()
     # Initialize write mode state from UI components
     init_write_mode_state()
 
@@ -596,6 +618,172 @@ def _save_last_flash_backup(model: str, bmp_bytes: bytes) -> Path:
     return out_path
 
 
+def _safe_text(value: object) -> str:
+    """Normalize optional device fields to lowercase text."""
+    if value is None:
+        return ""
+    return str(value).strip().lower()
+
+
+def _list_port_metadata() -> dict:
+    """Return metadata for visible ports keyed by device path."""
+    if serial is None:
+        return {}
+
+    info = {}
+    for p in serial.tools.list_ports.comports():
+        info[p.device] = {
+            "device": p.device,
+            "description": _safe_text(getattr(p, "description", "")),
+            "manufacturer": _safe_text(getattr(p, "manufacturer", "")),
+            "product": _safe_text(getattr(p, "product", "")),
+            "hwid": _safe_text(getattr(p, "hwid", "")),
+            "vid": getattr(p, "vid", None),
+            "pid": getattr(p, "pid", None),
+        }
+    return info
+
+
+def _medium_confidence_score(port_info: dict) -> int:
+    """
+    Score medium-confidence signals for a serial port.
+
+    This intentionally excludes active probing. It is used only as a fallback
+    when handshake confidence is unavailable.
+    """
+    score = 0
+
+    vid = port_info.get("vid")
+    if isinstance(vid, int) and vid in KNOWN_BRIDGE_VIDS:
+        score += 2
+
+    desc_blob = " ".join(
+        [
+            port_info.get("description", ""),
+            port_info.get("manufacturer", ""),
+            port_info.get("product", ""),
+            port_info.get("hwid", ""),
+        ]
+    )
+    if any(token in desc_blob for token in MEDIUM_HINT_TOKENS):
+        score += 1
+
+    return score
+
+
+def _probe_radio_identity(
+    port: str,
+    model: str,
+    config: dict,
+    timeout_cap: float,
+) -> dict:
+    """
+    Perform a non-destructive identity probe for ranking.
+
+    This uses read-only handshake/ident operations only.
+    """
+    protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
+    try:
+        radio_id = read_radio_id(
+            port,
+            magic=config.get("magic"),
+            baudrate=int(config.get("baudrate", 115200)),
+            timeout=min(float(config.get("timeout", 2.0)), timeout_cap),
+            protocol=protocol,
+        )
+        return {
+            "port": port,
+            "model": model,
+            "ok": True,
+            "radio_id": radio_id,
+            "error": "",
+        }
+    except Exception as exc:
+        # Handshake failure is treated as low/unknown confidence.
+        return {
+            "port": port,
+            "model": model,
+            "ok": False,
+            "radio_id": "",
+            "error": str(exc),
+        }
+
+
+def _rank_ports_for_autoselect(ports: list[str], metadata: dict) -> list[str]:
+    """Rank ports by medium-confidence score and stable device-name fallback."""
+    return sorted(
+        ports,
+        key=lambda dev: (
+            _medium_confidence_score(metadata.get(dev, {"device": dev})),
+            dev.lower(),
+        ),
+        reverse=True,
+    )
+
+
+def _auto_select_port(
+    *,
+    model: str,
+    config: dict,
+    ports: list[str],
+    force_full_scan: bool,
+) -> tuple[Optional[str], str]:
+    """
+    Auto-select a likely port using bounded probing and explicit fallback rules.
+
+    Selection precedence:
+    1) High confidence: exactly one successful handshake probe.
+    2) Medium confidence: no high confidence, and exactly one strongest
+       descriptor/VID-based candidate.
+    """
+    if not ports:
+        return None, "No serial ports detected."
+
+    metadata = _list_port_metadata()
+    ranked_ports = _rank_ports_for_autoselect(ports, metadata)
+
+    probe_limit = len(ranked_ports) if force_full_scan else min(AUTO_PROBE_PORT_LIMIT, len(ranked_ports))
+    probed = ranked_ports[:probe_limit]
+    handshake_hits = []
+    handshake_failed = set()
+    timeout_cap = PORT_SCAN_TIMEOUT_SEC if force_full_scan else AUTO_PROBE_TIMEOUT_SEC
+
+    for dev in probed:
+        probe = _probe_radio_identity(dev, model, config, timeout_cap=timeout_cap)
+        if probe.get("ok"):
+            handshake_hits.append(dev)
+        else:
+            handshake_failed.add(dev)
+            logger.info("Auto-probe handshake failed on %s: %s", dev, probe.get("error", "unknown"))
+
+    if len(handshake_hits) == 1:
+        return handshake_hits[0], f"Auto-selected by successful handshake on {handshake_hits[0]}."
+
+    if len(handshake_hits) > 1:
+        return None, "Multiple radios responded; select port manually."
+
+    medium_ranked = []
+    for dev in ranked_ports:
+        if dev in handshake_failed:
+            continue
+        info = metadata.get(dev, {"device": dev})
+        score = _medium_confidence_score(info)
+        medium_ranked.append((dev, score))
+    medium_ranked = [item for item in medium_ranked if item[1] > 0]
+    medium_ranked.sort(key=lambda item: (item[1], item[0].lower()), reverse=True)
+
+    if len(medium_ranked) == 1:
+        dev, score = medium_ranked[0]
+        return dev, f"Auto-selected medium-confidence port ({dev}, score={score})."
+
+    if len(medium_ranked) >= 2 and medium_ranked[0][1] > medium_ranked[1][1]:
+        dev, score = medium_ranked[0]
+        return dev, f"Auto-selected strongest medium-confidence port ({dev}, score={score})."
+
+    limit_note = f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached." if not force_full_scan else "Full scan completed."
+    return None, f"{limit_note} No unique high-confidence candidate."
+
+
 def _probe_connection_status(port: str, model: str, config: dict, force: bool = False) -> dict:
     """Probe radio availability and cache short-lived status in session state."""
     now = time.time()
@@ -605,32 +793,15 @@ def _probe_connection_status(port: str, model: str, config: dict, force: bool = 
     if not force and same_target and fresh:
         return cache
 
-    protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
-    try:
-        radio_id = read_radio_id(
-            port,
-            magic=config.get("magic"),
-            baudrate=int(config.get("baudrate", 115200)),
-            timeout=min(float(config.get("timeout", 2.0)), 1.5),
-            protocol=protocol,
-        )
-        cache = {
-            "port": port,
-            "model": model,
-            "ts": now,
-            "ok": True,
-            "radio_id": radio_id,
-            "error": "",
-        }
-    except Exception as exc:
-        cache = {
-            "port": port,
-            "model": model,
-            "ts": now,
-            "ok": False,
-            "radio_id": "",
-            "error": str(exc),
-        }
+    probe = _probe_radio_identity(port, model, config, timeout_cap=1.5)
+    cache = {
+        "port": port,
+        "model": model,
+        "ts": now,
+        "ok": bool(probe.get("ok")),
+        "radio_id": probe.get("radio_id", ""),
+        "error": probe.get("error", ""),
+    }
 
     st.session_state.connection_probe = cache
     return cache
@@ -849,12 +1020,13 @@ def tab_boot_logo_flasher():
     if "processed_bmp" not in st.session_state:
         st.session_state.processed_bmp = None
     ports = list_serial_ports()
+    ports_snapshot = tuple(sorted(ports))
 
     bmp_bytes = st.session_state.processed_bmp
     top_left, top_right = st.columns([1, 1])
 
     with top_left:
-        header_cols = st.columns([2.2, 1.2], vertical_alignment="center")
+        header_cols = st.columns([2.2, 0.9, 0.9], vertical_alignment="center")
         with header_cols[0]:
             _render_section_header("Step 1 · Connection")
         with header_cols[1]:
@@ -865,15 +1037,38 @@ def tab_boot_logo_flasher():
                 value=st.session_state.connection_show_controls,
                 aria_label="Show controls help",
             )
+        with header_cols[2]:
+            if st.button("Scan", use_container_width=True):
+                st.session_state.connection_scan_seq += 1
 
         models = list(SERIAL_FLASH_CONFIGS.keys())
         selected_model = st.session_state.selected_model if st.session_state.selected_model in models else models[0]
         st.session_state.selected_model = selected_model
-        if st.session_state.selected_port is None and ports:
-            st.session_state.selected_port = ports[0]
+        should_autoselect = (
+            ports_snapshot != st.session_state.connection_last_ports_snapshot
+            or st.session_state.connection_autoselect_seq != st.session_state.connection_scan_seq
+            or (st.session_state.selected_port and st.session_state.selected_port not in ports)
+            or (not st.session_state.selected_port)
+        )
+
+        if should_autoselect:
+            force_scan = st.session_state.connection_autoselect_seq != st.session_state.connection_scan_seq
+            auto_port, reason = _auto_select_port(
+                model=selected_model,
+                config=dict(SERIAL_FLASH_CONFIGS[selected_model]),
+                ports=ports,
+                force_full_scan=force_scan,
+            )
+            st.session_state.connection_last_ports_snapshot = ports_snapshot
+            st.session_state.connection_autoselect_seq = st.session_state.connection_scan_seq
+            st.session_state.connection_autoselect_reason = reason
+            if auto_port:
+                st.session_state.selected_port = auto_port
+            elif st.session_state.selected_port not in ports:
+                st.session_state.selected_port = None
 
         model = st.session_state.selected_model
-        port = st.session_state.selected_port or "/dev/cu.Plser"
+        port = st.session_state.selected_port or ""
         config = dict(SERIAL_FLASH_CONFIGS[model])
         probe = st.session_state.connection_probe
         ready_now = bool(
@@ -900,17 +1095,23 @@ def tab_boot_logo_flasher():
                     default = st.session_state.selected_port if st.session_state.selected_port in ports else port_options[0]
                     selected = st.selectbox("Serial Port", port_options, index=port_options.index(default), key="port_select")
                     if selected == "[Enter manually]":
-                        port = st.text_input("Port Path", value=st.session_state.selected_port or "/dev/cu.Plser")
+                        port = st.text_input("Port Path", value=st.session_state.selected_port or "")
                     else:
                         port = selected
                 else:
-                    port = st.text_input("Port Path", value=st.session_state.selected_port or "/dev/cu.Plser")
+                    port = st.text_input("Port Path", value=st.session_state.selected_port or "")
 
             st.session_state.selected_model = model
             st.session_state.selected_port = port
         else:
             model = st.session_state.selected_model
-            port = st.session_state.selected_port or "/dev/cu.Plser"
+            port = st.session_state.selected_port or ""
+
+        st.caption(
+            "Auto-detect signals: handshake=high, known USB-UART VID/descriptor=medium. "
+            f"Auto-probe max {AUTO_PROBE_PORT_LIMIT} ports unless you click Scan. "
+            f"{st.session_state.connection_autoselect_reason}"
+        )
 
         config = dict(SERIAL_FLASH_CONFIGS[model])
         probe = _render_connection_health(model=model, config=config, port=port, ports=ports)
