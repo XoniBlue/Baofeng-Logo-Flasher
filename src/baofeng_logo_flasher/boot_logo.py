@@ -93,7 +93,13 @@ def read_radio_id(
     fingerprint: bytes = b"\x06",
 ) -> str:
     """
-    Connect to radio and read its ID using UV17Pro-compatible handshake.
+    Connect to radio and read an A5-family identification fingerprint.
+
+    IMPORTANT:
+    - This identifier is advisory and primarily proves protocol reachability.
+    - UV-5RM and UV-17 variants may report overlapping UV17Pro-family strings.
+    - Callers must not hard-block flashing based on this string alone.
+      The effective safety boundary is protocol/profile compatibility.
     """
     if not serial:
         raise BootLogoError("PySerial not installed")

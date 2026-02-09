@@ -641,6 +641,8 @@ def _probe_radio_identity(
     Perform a non-destructive identity probe for ranking.
 
     This uses read-only handshake/ident operations only.
+    The returned radio_id string is advisory for UX and connection confidence;
+    it is not a strict model gate for A5-family flashing.
     """
     protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
     try:
@@ -754,6 +756,8 @@ def _probe_connection_status(port: str, model: str, config: dict, force: bool = 
         return cache
 
     probe = _probe_radio_identity(port, model, config, timeout_cap=1.5)
+    # Intentionally avoid strict model-string validation here. UV-5RM can
+    # report UV-17-family IDs while still using the same A5 logo protocol.
     cache = {
         "port": port,
         "model": model,

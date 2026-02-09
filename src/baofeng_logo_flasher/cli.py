@@ -578,6 +578,9 @@ def upload_logo_serial(
     Upload logo via A5 serial protocol (UV-5RM/UV-17 family).
 
     This is the direct protocol path used by the Streamlit flasher.
+    Note: UV-5RM radios may identify with UV-17-family strings in handshake
+    responses. Upload safety here is enforced by explicit profile/protocol
+    selection plus write confirmation, not strict ident string matching.
     """
     print_header("Upload Logo (Serial A5)")
 
