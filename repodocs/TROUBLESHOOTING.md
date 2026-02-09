@@ -27,7 +27,7 @@ Verify:
 - try again after power cycle.
 
 Fix:
-- reconnect cable, confirm model path (A5 vs legacy), retry.
+- reconnect cable and confirm the selected A5 model profile, then retry.
 
 Code references:
 - `protocol/logo_protocol.py:LogoUploader.handshake`
@@ -60,8 +60,8 @@ Fix:
 - retry with known-good cable/port and correct model profile.
 
 Code references:
-- `cli.py:upload_logo` readback compare
-- `core/actions.py:write_logo` verification compare
+- `core/actions.py:flash_logo_serial` error handling
+- `protocol/logo_protocol.py:LogoUploader.send_image_data`
 
 ## 5) Symptom: UI fails to launch with missing package error
 
@@ -74,22 +74,7 @@ Verify/Fix:
 Code reference:
 - `streamlit_ui.py` top-level `try/except ImportError`
 
-## 6) Symptom: backup/download unavailable for UV-5RM/UV-17 A5 models
-
-Likely cause:
-- A5 read-back not implemented in app.
-
-Verify:
-- UI backup mode info message or thrown error path.
-
-Fix:
-- use last-flash local backup if available; direct A5 read-back is not implemented.
-
-Code references:
-- `streamlit_ui.py:tab_boot_logo_flasher` (backup mode branch)
-- `boot_logo.py:read_logo` (raises for `protocol == "a5_logo"`)
-
-## 7) Symptom: image rejected (size/format)
+## 6) Symptom: image rejected (size/format)
 
 Likely cause:
 - wrong dimensions/BMP constraints for specific path.
@@ -102,16 +87,15 @@ Fix:
 
 Code references:
 - `bmp_utils.py:validate_bmp_bytes`
-- `boot_logo.py:convert_bmp_to_raw`
 - `streamlit_ui.py:_process_image_for_radio`
 
-## 8) Symptom: manual/advanced API mismatch
+## 7) Symptom: manual/advanced API mismatch
 
 Likely cause:
-- `core/actions.py:read_clone` passes `progress_cb` into `UV5RMProtocol.download_clone`, but protocol method currently does not accept that parameter.
+- calling internal helper APIs that are not part of the A5 upload flow contract.
 
 Verify:
-- inspect signatures in both files.
+- inspect current public flow in `core/actions.py:flash_logo_serial`.
 
 Fix:
-- update one side of the interface before using that core function path directly.
+- route custom integrations through `flash_logo_serial` and `boot_logo.flash_logo`.

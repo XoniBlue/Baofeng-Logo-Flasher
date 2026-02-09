@@ -299,7 +299,7 @@ def list_models() -> None:
     """List supported radio models and their configurations."""
     print_header("Supported Radio Models")
 
-    # Serial flash configs (UV-5RM, DM-32UV, etc.)
+    # A5 serial flash configs (UV-5RM/UV-17 family).
     if SERIAL_FLASH_CONFIGS:
         table = Table(title="Serial Flash Models")
         table.add_column("Model", style="cyan")
@@ -315,35 +315,12 @@ def list_models() -> None:
             color = cfg.get("color_mode", "N/A")
             addr = f"0x{cfg.get('start_addr', 0):04X}"
             encrypted = "Yes" if cfg.get("encrypt", False) else "No"
-            protocol = cfg.get("protocol", "legacy")
+            protocol = cfg.get("protocol", "a5_logo")
             write_addr = cfg.get("write_addr_mode", "-")
 
             table.add_row(name, size, color, addr, encrypted, protocol, str(write_addr))
 
         console.print(table)
-
-    # Model configs (UV-5RH Pro, UV-17R, etc.)
-    if MODEL_CONFIGS:
-        console.print()
-        table2 = Table(title="Clone-Based Models")
-        table2.add_column("Model", style="cyan")
-        table2.add_column("Logo Region", style="green")
-        table2.add_column("Scan Ranges", style="yellow")
-
-        for name, cfg in sorted(MODEL_CONFIGS.items()):
-            if cfg.logo_region:
-                region = f"0x{cfg.logo_region.start:04X} ({cfg.logo_region.length} bytes)"
-            else:
-                region = "Unknown (requires discovery)"
-
-            if cfg.scan_ranges:
-                ranges = ", ".join(f"0x{s:04X}-0x{e:04X}" for s, e in cfg.scan_ranges)
-            else:
-                ranges = "None defined"
-
-            table2.add_row(name, region, ranges)
-
-        console.print(table2)
 
     console.print()
     console.print("Use [cyan]show-model-config <model>[/cyan] for detailed configuration.")
@@ -369,7 +346,7 @@ def show_model_config(
         table.add_row("Start Address", f"0x{cfg.get('start_addr', 0):04X}")
         table.add_row("Block Size", str(cfg.get("block_size", 64)))
         table.add_row("Encryption", "Yes" if cfg.get("encrypt", False) else "No")
-        table.add_row("Protocol", str(cfg.get("protocol", "legacy")))
+        table.add_row("Protocol", str(cfg.get("protocol", "a5_logo")))
         if "write_addr_mode" in cfg:
             table.add_row("Write Addr Mode", str(cfg.get("write_addr_mode")))
         table.add_row("Baud Rate", str(cfg.get("baudrate", 9600)))
@@ -398,37 +375,11 @@ def show_model_config(
 
         return
 
-    # Check model configs
-    if model in MODEL_CONFIGS:
-        cfg = MODEL_CONFIGS[model]
-
-        table = Table(title=f"{model} Clone Config")
-        table.add_column("Property", style="cyan")
-        table.add_column("Value", style="green")
-
-        table.add_row("Name", cfg.name)
-
-        if cfg.logo_region:
-            table.add_row("Logo Start", f"0x{cfg.logo_region.start:04X}")
-            table.add_row("Logo Length", f"{cfg.logo_region.length} bytes")
-            table.add_row("Block Size", str(cfg.logo_region.block_size))
-        else:
-            table.add_row("Logo Region", "[yellow]Not defined - requires discovery[/yellow]")
-
-        if cfg.scan_ranges:
-            ranges = ", ".join(f"0x{s:04X}-0x{e:04X}" for s, e in cfg.scan_ranges)
-            table.add_row("Scan Ranges", ranges)
-        else:
-            table.add_row("Scan Ranges", "[yellow]None defined[/yellow]")
-
-        console.print(table)
-        return
-
     # Model not found
     print_error(f"Model '{model}' not found.")
     console.print()
     console.print("Available models:")
-    all_models = sorted(set(list(SERIAL_FLASH_CONFIGS.keys()) + list(MODEL_CONFIGS.keys())))
+    all_models = sorted(SERIAL_FLASH_CONFIGS.keys())
     for m in all_models:
         console.print(f"  - {m}")
     sys.exit(1)

@@ -3,12 +3,10 @@
 ## High-Risk Operations
 
 These operations can write to device memory/protocol state:
-- CLI `upload-logo`
 - CLI `upload-logo-serial`
 - UI Step 3 flash when write mode is enabled
 
 Relevant code:
-- `cli.py:upload_logo`
 - `cli.py:upload_logo_serial`
 - `streamlit_ui.py:_do_flash`
 
@@ -23,8 +21,7 @@ Relevant code:
 ## Irreversible/Uncertain Areas
 
 - A5 logo write is a direct serial protocol path (`protocol/logo_protocol.py`) and can fail mid-transfer if cable/power is unstable.
-- Legacy write/read region assumptions can be wrong for firmware variants (`boot_logo.py` discovery and region config paths).
-- Read-back of current logo is explicitly unavailable for A5 models in this app (`boot_logo.py:read_logo` guard, UI backup mode messaging).
+- A5 logo write is one-way in this app; direct radio read-back is not implemented.
 
 ## Recommended Operator Workflow
 

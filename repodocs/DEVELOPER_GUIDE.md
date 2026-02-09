@@ -59,6 +59,4 @@ Even without relying on existing tests here, add/maintain tests around:
 
 ## Current Brittle Areas
 
-- Duplicate `UV-17R` registration in `models/registry.py:_init_registry` (last write wins).
-- `core/actions.py:read_clone` interface mismatch to `UV5RMProtocol.download_clone` signature.
-- Multiple model truth sources can drift.
+- Multiple model truth sources can drift if registry and boot-logo config overlays diverge.

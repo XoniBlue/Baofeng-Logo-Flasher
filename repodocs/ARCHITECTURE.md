@@ -17,11 +17,10 @@ The codebase is split into five runtime layers:
 
 3. Protocol/IO layer:
 - `src/baofeng_logo_flasher/protocol/uv5rm_transport.py` (serial primitives)
-- `src/baofeng_logo_flasher/protocol/uv5rm_protocol.py` (UV5R clone protocol)
 - `src/baofeng_logo_flasher/protocol/logo_protocol.py` (A5 logo protocol)
 
 4. Domain services:
-- `src/baofeng_logo_flasher/boot_logo.py` (format conversions + service abstractions)
+- `src/baofeng_logo_flasher/boot_logo.py` (A5 flash orchestration + model config bridge)
 - `src/baofeng_logo_flasher/logo_codec.py` (bitmap packing)
 - `src/baofeng_logo_flasher/bmp_utils.py` (BMP validation)
 
@@ -45,11 +44,11 @@ Additional path:
 - `protocol/uv5rm_transport.py`
   - Raw serial reads/writes, ACK handling, block-level read/write.
 - `protocol/uv5rm_protocol.py`
-  - Handshake/model-version detection and clone-level operations.
+  - Radio identification helpers used by CLI `detect`.
 - `protocol/logo_protocol.py`
   - A5 frame protocol: CRC16, command sequence, chunked image write.
 - `boot_logo.py`
-  - Model-specific configs (`SERIAL_FLASH_CONFIGS`), legacy and A5 dispatch, image data conversions.
+  - Model-specific A5 configs (`SERIAL_FLASH_CONFIGS`) and protocol dispatch.
 - `models/registry.py`
   - Central model metadata/capabilities for reporting and config lookups.
 
@@ -60,17 +59,15 @@ Additional path:
 - `UV5RMTransport` (`protocol/uv5rm_transport.py`)
 - `UV5RMProtocol` (`protocol/uv5rm_protocol.py`)
 - `LogoUploader` (`protocol/logo_protocol.py`)
-- `BootLogoService` (`boot_logo.py`)
 - `ModelConfig`, `ModelCapabilities` (`models/registry.py`)
 
 ## Extension Points
 
 - Add models and capability metadata via `models/registry.py:_init_registry`.
-- Add new serial/protocol behavior in `protocol/` and wire into `boot_logo.flash_logo` dispatch.
+- Add new A5-capable model metadata in `models/registry.py` and consume via `boot_logo`.
 - Extend CLI by adding Typer commands in `cli.py` that call `core/actions.py`.
 - Extend UI by adding tabs/components in `streamlit_ui.py` and `ui/components.py`.
 
 ## Known Architecture Tensions
 
-- Duplicate UV-17R model registration in `models/registry.py:_init_registry` causes later definition override (the later one has empty `logo_regions`).
-- `boot_logo.py:SERIAL_FLASH_CONFIGS` and `models/registry.py` are overlapping sources of model truth; they are not fully consistent.
+- `protocol/uv5rm_protocol.py` still exists for detection/protocol compatibility, while the active product path is exclusively A5 logo upload.

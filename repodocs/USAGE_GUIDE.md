@@ -27,7 +27,7 @@ Failure output:
 baofeng-logo-flasher list-models
 ```
 
-Shows serial flash models and clone-based model config tables.
+Shows A5 serial flash model profiles.
 
 ### 3) Detect connected radio
 
@@ -101,15 +101,6 @@ baofeng-logo-flasher upload-logo-serial \
 ```
 
 Generated artifacts are written by `protocol/logo_protocol.py:dump_logo_debug_artifacts`.
-
-### Legacy path with explicit region
-
-```bash
-baofeng-logo-flasher upload-logo \
-  --port /dev/ttyUSB0 --in logo.bmp \
-  --logo-start 0x1000 --logo-length 61440 \
-  --write --confirm WRITE
-```
 
 ## Safety Expectations
 

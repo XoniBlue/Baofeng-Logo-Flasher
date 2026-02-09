@@ -25,8 +25,6 @@ from .messages import (
 )
 from .actions import (
     prepare_logo_bytes,
-    read_clone,
-    write_logo,
     flash_logo_serial,
 )
 
@@ -49,7 +47,5 @@ __all__ = [
     "COMMON_WARNINGS",
     # Actions
     "prepare_logo_bytes",
-    "read_clone",
-    "write_logo",
     "flash_logo_serial",
 ]

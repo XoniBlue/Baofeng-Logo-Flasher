@@ -6,8 +6,7 @@ This `repodocs/` set documents the **actual runtime behavior** of the repository
 
 `baofeng-logo-flasher` is a Python application for:
 - serial-port radio detection,
-- clone read/write operations for UV5R-style protocol paths,
-- boot-logo upload workflows,
+- A5 boot-logo upload workflows,
 - and a Streamlit UI focused on direct serial logo flashing.
 
 Primary runtime entrypoints are:
@@ -24,11 +23,8 @@ References:
 Implemented features in runtime code:
 - List serial ports: `cli.py:ports`
 - Detect radio identity/version: `cli.py:detect`, `protocol/uv5rm_protocol.py:UV5RMProtocol.identify_radio`
-- Read clone image: `cli.py:read_clone`, `protocol/uv5rm_protocol.py:download_clone`
-- Upload logo via legacy block path: `cli.py:upload_logo`, `boot_logo.py:BootLogoService`, `boot_logo.py:_flash_logo_legacy_protocol`
 - Upload logo via A5 serial logo protocol: `cli.py:upload_logo_serial`, `core/actions.py:flash_logo_serial`, `protocol/logo_protocol.py:LogoUploader.upload_logo`
-- Download logo for non-A5 model configs: `cli.py:download_logo`, `boot_logo.py:read_logo`
-- Streamlit guided workflow: `streamlit_ui.py:tab_boot_logo_flasher`, `_do_flash`, `_do_download_logo`
+- Streamlit guided workflow: `streamlit_ui.py:tab_boot_logo_flasher`, `_do_flash`
 
 Safety enforcement exists in shared core module:
 - `core/safety.py:require_write_permission`
@@ -89,15 +85,6 @@ baofeng-logo-flasher upload-logo-serial \
   --write --confirm WRITE
 ```
 
-### CLI: legacy upload path
-
-```bash
-baofeng-logo-flasher upload-logo \
-  --port /dev/ttyUSB0 \
-  --in logo.bmp \
-  --write --confirm WRITE
-```
-
 ### UI
 
 ```bash
@@ -115,7 +102,6 @@ Runtime configuration sources:
 - CLI options (Typer command args/options) in `cli.py`
 - in-code model/config dictionaries:
   - `boot_logo.py:SERIAL_FLASH_CONFIGS`
-  - `boot_logo.py:MODEL_CONFIGS`
   - `models/registry.py:_MODEL_REGISTRY`
 - safety token constant: `core/safety.py:CONFIRMATION_TOKEN` (`WRITE`)
 - Streamlit session state keys initialized in `streamlit_ui.py:_init_session_state`
@@ -142,12 +128,12 @@ High-frequency failure classes in code paths:
 - serial open/permission failures (`protocol/uv5rm_transport.py:open`)
 - handshake ACK mismatch (`protocol/logo_protocol.py:LogoUploader.handshake`)
 - write-denied safety gate (`core/safety.py:require_write_permission`)
-- read-back mismatch (`cli.py:upload_logo`, `core/actions.py:write_logo`)
+- frame/data ACK mismatch during image transfer (`protocol/logo_protocol.py:LogoUploader.send_image_data`)
 
 ## Safety Notes
 
 Potentially destructive operations:
-- Any path that writes to radio memory/protocol (`upload-logo`, `upload-logo-serial`, UI write mode)
+- Any path that writes to radio memory/protocol (`upload-logo-serial`, UI write mode)
 
 Guardrails in code:
 - explicit `--write` + confirmation token (`WRITE`) for CLI write paths
@@ -177,6 +163,6 @@ Top-level runtime-relevant layout:
 - `src/baofeng_logo_flasher/streamlit_ui.py` – Streamlit UI entrypoint and pages
 - `src/baofeng_logo_flasher/core/` – shared safety/parsing/results/action/message logic
 - `src/baofeng_logo_flasher/protocol/` – serial transport + UV5R/A5 protocols
-- `src/baofeng_logo_flasher/boot_logo.py` – logo conversion, flash/read helpers, model configs
+- `src/baofeng_logo_flasher/boot_logo.py` – A5 flash helpers and model configs
 - `src/baofeng_logo_flasher/models/` – model registry and capability reporting
 - `src/baofeng_logo_flasher/ui/` – reusable Streamlit components

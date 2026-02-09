@@ -44,29 +44,10 @@ CLI (`upload-logo-serial`) and UI (`_do_flash`) converge on shared core action:
 - `LogoUploader.send_completion_frame`
 - `LogoUploader.close` (finally)
 
-### B) Legacy logo upload path (`upload-logo`)
+### B) Removed Legacy Paths
 
-1. `cli.py:upload_logo` opens `UV5RMTransport`, then `UV5RMProtocol`.
-2. Detects model with `UV5RMProtocol.identify_radio`.
-3. Resolves target region via `BootLogoService.resolve_logo_region` or discovery (`discover_logo_region`).
-4. Prepares bytes via `BootLogoService.prepare_logo_bytes` + `bmp_utils.validate_bmp_bytes`.
-5. If not dry-run, performs explicit CLI confirmation (`confirm_write_with_details`).
-6. Writes blocks with `UV5RMProtocol.write_block` loop.
-7. Reads back with `UV5RMProtocol.read_block` loop and compares.
-
-### C) Clone download path (`read_clone`)
-
-1. `cli.py:read_clone` constructs transport/protocol.
-2. `UV5RMProtocol.identify_radio`.
-3. `UV5RMProtocol.download_clone` reads address ranges.
-4. Optional output file write by CLI command.
-
-### D) Logo backup/download path (`download-logo` and UI backup mode)
-
-1. `cli.py:download_logo` or `streamlit_ui.py:_do_download_logo`.
-2. Calls `boot_logo.py:read_logo` for non-A5 models.
-3. Converts raw bytes to BMP with `boot_logo.py:convert_raw_to_bmp`.
-4. Writes/sends BMP output.
+Legacy clone/block logo flows (`upload-logo`, `download-logo`, UI backup/download branch)
+have been removed. Runtime supports A5 serial logo upload only.
 
 ## Shutdown / Cleanup
 

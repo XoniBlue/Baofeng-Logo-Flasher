@@ -28,7 +28,7 @@ The flasher uses model config from `SERIAL_FLASH_CONFIGS`.
 For UV-5RM/UV-17-family, effective A5 write mode is:
 - `write_addr_mode: chunk`
 
-This was required in older versions or legacy modes to avoid the top-line-only/gray-screen failure.
+This addresses historical addressing mismatches that caused top-line-only/gray-screen failures.
 
 ## Safety Contract
 

@@ -75,10 +75,6 @@ Current testing status:
 | `UV-17Pro` | `upload-logo-serial` / Streamlit Step 3 | Supported |
 | `UV-17R` | `upload-logo-serial` / Streamlit Step 3 | Supported |
 
-### Other models present in registry/capabilities
-
-`DM-32UV`, `UV-5RH Pro`, `UV-17R Pro`, `UV-5R`, `UV-5R-ORIG`, `UV-82`, `UV-6`, `F-11`, `A-58`, `UV-5G`, `F-8HP`, `UV-82HP`, `82X3`
-
 ---
 
 ## 2) What this tool does / does not do
