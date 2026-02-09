@@ -15,7 +15,8 @@ For tested UV-5RM firmware, successful A5 writes require:
 - chunk payload size: `1024`
 - `CMD_WRITE` address mode: `chunk` (0,1,2,...)
 
-Using byte-offset address mode can produce:
+
+Using byte-offset address mode (historical symptom, older versions):
 - recognizable content only on top row
 - remaining display gray/garbled
 

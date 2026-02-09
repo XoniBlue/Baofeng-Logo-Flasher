@@ -40,14 +40,16 @@ baofeng-logo-flasher ports
 
 Use the full path, for example `/dev/cu.Plser`.
 
-## 4. Flash reports success but display shows top line + gray screen
+## 4. Historical (fixed): Flash reports success but display shows top line + gray screen
 
-This symptom is strongly tied to incorrect write addressing mode.
+This symptom was strongly tied to incorrect write addressing mode in older versions or misconfigured setups.
+
+**Note:** If you see this issue today, update to the current release and verify your configuration (address mode/model), then retry.
 
 Expected for UV-5RM/UV-17 A5 flashing:
 - `write_addr_mode: chunk`
 
-Checks:
+Checks (for historical context):
 1. Pull latest code.
 2. Fully restart Streamlit if using UI.
 3. Validate once with CLI:

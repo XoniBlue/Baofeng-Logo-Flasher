@@ -20,9 +20,11 @@ Working mode:
 - address sequence: `0x0000`, `0x0001`, `0x0002`, ...
 - payload length: `0x0400` bytes per write frame
 
-Known failing mode:
-- address sequence: `0x0000`, `0x0400`, `0x0800`, ...
-- observed symptom: top-line image fragment + gray/garbled rest of display
+
+Historical failing mode (fixed):
+- In older builds or with misconfiguration, address sequence: `0x0000`, `0x0400`, `0x0800`, ...
+- This produced the symptom: top-line image fragment + gray/garbled rest of display.
+- This issue affected previous versions or incorrect address mode settings, and is resolved in current releases with correct configuration.
 
 Configured defaults use `write_addr_mode: "chunk"` for supported UV-5RM/UV-17 entries.
 

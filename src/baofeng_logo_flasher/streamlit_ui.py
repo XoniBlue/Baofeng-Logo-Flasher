@@ -11,6 +11,7 @@ import logging
 import sys
 import tempfile
 import time
+import html
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -69,7 +70,6 @@ from baofeng_logo_flasher.models import (
 from baofeng_logo_flasher.ui.components import (
     render_warning_list,
     render_status_error,
-    render_raw_logs,
     init_write_mode_state,
 )
 
@@ -124,12 +124,13 @@ def main():
                 radial-gradient(1200px 620px at 12% -10%, rgba(25, 52, 112, 0.18), rgba(0, 0, 0, 0) 45%),
                 radial-gradient(900px 520px at 98% -5%, rgba(16, 90, 72, 0.15), rgba(0, 0, 0, 0) 40%),
                 linear-gradient(180deg, #020913 0%, #050d19 100%);
+            overflow-x: hidden;
         }
         [data-testid="stAppViewContainer"] > .main > div {
             padding-top: 1.35rem;
         }
         section.main > div.block-container {
-            max-width: 1180px;
+            max-width: 980px;
             padding-top: 0.3rem;
             padding-bottom: 1.5rem;
         }
@@ -147,8 +148,9 @@ def main():
 
         /* Hero */
         .hero-wrap {
-            margin: 0.25rem auto 0.9rem auto;
-            max-width: 980px;
+            margin: 0.25rem 0 0.9rem 0;
+            width: 100%;
+            max-width: none;
             text-align: center;
             padding: 1.1rem 1.2rem;
             border-radius: 14px;
@@ -231,6 +233,9 @@ def main():
         /* Connection status chip tooltip */
         .conn-chip {
             position: relative;
+            display: inline-flex;
+            align-items: center;
+            vertical-align: middle;
         }
         .conn-chip-info {
             display: inline-flex;
@@ -238,7 +243,7 @@ def main():
             justify-content: center;
             width: 18px;
             height: 18px;
-            margin-left: 8px;
+            margin-left: 6px;
             border-radius: 999px;
             border: 1px solid rgba(255,255,255,0.38);
             color: rgba(255,255,255,0.90);
@@ -250,11 +255,13 @@ def main():
         }
         .conn-chip-tip {
             position: absolute;
-            left: 12px;
+            right: 0;
+            left: auto;
             top: calc(100% + 9px);
             z-index: 20;
-            min-width: 260px;
-            max-width: 360px;
+            width: min(340px, calc(100vw - 32px));
+            min-width: 0;
+            max-width: min(340px, calc(100vw - 32px));
             padding: 10px 12px;
             border-radius: 10px;
             border: 1px solid rgba(255,255,255,0.18);
@@ -269,6 +276,7 @@ def main():
             font-weight: 500;
             font-size: 0.9rem;
             line-height: 1.35;
+            text-align: center;
         }
         .conn-chip-info:hover .conn-chip-tip {
             opacity: 1;
@@ -317,126 +325,172 @@ def launch() -> None:
 # TAB: CAPABILITIES
 # ============================================================================
 
+def _capability_safety_label(level: SafetyLevel) -> str:
+    """Normalize safety text for capability table rows."""
+    mapping = {
+        SafetyLevel.SAFE: "Safe",
+        SafetyLevel.MODERATE: "Moderate",
+        SafetyLevel.RISKY: "Risky",
+    }
+    return mapping.get(level, str(level.value).title())
+
+
+def _build_model_capability_snapshot(model_name: str) -> dict:
+    """Build a unified capabilities snapshot for one model."""
+    config = registry_get_model(model_name)
+    caps = registry_get_capabilities(model_name)
+
+    ready_ops = sum(1 for c in caps.capabilities if c.supported)
+    total_ops = len(caps.capabilities)
+    risky_ops = sum(1 for c in caps.capabilities if c.safety == SafetyLevel.RISKY)
+    moderate_ops = sum(1 for c in caps.capabilities if c.safety == SafetyLevel.MODERATE)
+    logo_mapped = bool(caps.discovered_regions)
+    primary_region = caps.discovered_regions[0] if caps.discovered_regions else None
+
+    protocol = config.protocol.value.upper() if config else "Unknown"
+    baud = str(config.baud_rate) if config else "Unknown"
+    region_text = (
+        f"0x{primary_region.start_addr:04X} ({primary_region.width}x{primary_region.height})"
+        if primary_region
+        else "Unmapped"
+    )
+
+    return {
+        "model": model_name,
+        "protocol": protocol,
+        "baud": baud,
+        "logo_mapped": logo_mapped,
+        "logo_region": region_text,
+        "ready_ops": ready_ops,
+        "total_ops": total_ops,
+        "risky_ops": risky_ops,
+        "moderate_ops": moderate_ops,
+        "caps": caps,
+    }
+
+
 def tab_capabilities():
     """Show capabilities report for radio models."""
     import json
 
-    st.markdown("### 📋 Model Capabilities")
-    st.markdown(
-        """
-        View supported operations, safety levels, and configuration for each radio model.
-        Select a model or connect a radio to see what operations are available.
-        """
+    _render_section_header(
+        "Model Capabilities",
+        [
+            "Registry-driven and refreshed from current model definitions.",
+            "Use compact view by default; expand details only when needed.",
+        ],
+        "Capabilities help",
     )
 
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        # Model selector
+    controls_left, controls_mid, controls_right = st.columns([2.4, 1.0, 1.0], vertical_alignment="center")
+    with controls_left:
         models = registry_list_models()
         selected_model = st.selectbox(
-            "Select Model",
+            "Model",
             models,
             index=models.index("UV-5RM") if "UV-5RM" in models else 0,
-            help="Choose a radio model to view its capabilities",
+            label_visibility="collapsed",
         )
+    with controls_mid:
+        show_details = st.toggle("Show details", value=False, key="caps_show_details")
+    with controls_right:
+        export_json = st.toggle("Show JSON", value=False, key="caps_show_json")
 
-    with col2:
-        # JSON export option
-        export_json = st.checkbox("Show JSON", help="Display raw JSON for scripting")
-
-    # Get capabilities
-    caps = registry_get_capabilities(selected_model)
+    snapshot = _build_model_capability_snapshot(selected_model)
+    caps = snapshot["caps"]
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if export_json:
         st.json(caps.to_dict())
         return
 
-    # Config summary
-    config = registry_get_model(selected_model)
-    if config:
-        st.markdown("#### Configuration")
-        config_cols = st.columns(4)
-        with config_cols[0]:
-            st.metric("Protocol", config.protocol.value.upper())
-        with config_cols[1]:
-            st.metric("Baud Rate", f"{config.baud_rate}")
-        with config_cols[2]:
-            magic_display = config.magic_bytes.decode('ascii', errors='ignore') if len(config.magic_bytes) == 16 else config.magic_bytes.hex().upper()[:16]
-            st.metric("Magic", magic_display + ("..." if len(magic_display) >= 16 else ""))
-        with config_cols[3]:
-            region_count = len(caps.discovered_regions)
-            st.metric("Logo Regions", str(region_count) if region_count > 0 else "Unknown")
+    summary_items = [
+        ("Model", snapshot["model"]),
+        ("Protocol", snapshot["protocol"]),
+        ("Baud", snapshot["baud"]),
+        ("Logo", "Mapped" if snapshot["logo_mapped"] else "Unmapped"),
+        ("Ops", f"{snapshot['ready_ops']}/{snapshot['total_ops']} ready"),
+    ]
+    if snapshot["risky_ops"] > 0:
+        summary_items.append(("Risky", str(snapshot["risky_ops"])))
 
-    st.markdown("---")
+    summary_html = "".join(
+        (
+            "<span style='display:inline-flex;align-items:center;gap:0.35rem;"
+            "padding:0.33rem 0.52rem;border-radius:999px;border:1px solid rgba(255,255,255,0.12);"
+            "background:rgba(255,255,255,0.03);font-size:0.86rem;white-space:nowrap;'>"
+            f"<span style='opacity:0.75'>{html.escape(k)}:</span>"
+            f"<span style='font-weight:700'>{html.escape(v)}</span></span>"
+        )
+        for k, v in summary_items
+    )
+    st.markdown(
+        (
+            "<div style='display:flex;flex-wrap:wrap;gap:0.42rem;"
+            "margin:0.22rem 0 0.52rem 0;'>"
+            f"{summary_html}</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Snapshot: {generated_at} (local registry data)")
 
-    # Capabilities table
-    st.markdown("#### Supported Operations")
-
-    cap_data = []
+    cap_rows = []
     for cap_info in caps.capabilities:
-        safety_emoji = {
-            SafetyLevel.SAFE: "✅",
-            SafetyLevel.MODERATE: "⚠️",
-            SafetyLevel.RISKY: "🔴",
-        }.get(cap_info.safety, "❓")
-
-        cap_data.append({
+        cap_rows.append({
             "Operation": cap_info.capability.name.replace("_", " ").title(),
-            "Supported": "✅ Yes" if cap_info.supported else "❌ No",
-            "Safety": f"{safety_emoji} {cap_info.safety.value.title()}",
-            "Reason": cap_info.reason,
+            "Status": "Ready" if cap_info.supported else "Blocked",
+            "Safety": _capability_safety_label(cap_info.safety),
+            "Detail": cap_info.reason,
         })
 
-    st.dataframe(cap_data, use_container_width=True, hide_index=True)
+    ops_height = min(46 + (len(cap_rows) * 35), 320)
+    st.dataframe(cap_rows, use_container_width=True, hide_index=True, height=ops_height)
 
-    # Logo regions
-    if caps.discovered_regions:
-        st.markdown("#### Logo Regions")
+    if show_details:
+        with st.expander("Details", expanded=True):
+            if caps.discovered_regions:
+                region_rows = []
+                for region in caps.discovered_regions:
+                    region_rows.append({
+                        "Address": f"0x{region.start_addr:04X}-0x{region.end_addr:04X}",
+                        "Dimensions": f"{region.width}x{region.height}",
+                        "Color": region.color_mode,
+                        "Encrypted": "Yes" if region.encrypt else "No",
+                        "Bytes": f"{region.length:,}",
+                    })
+                regions_height = min(46 + (len(region_rows) * 35), 220)
+                st.dataframe(region_rows, use_container_width=True, hide_index=True, height=regions_height)
+            else:
+                st.info("Logo region not mapped for this model.")
 
-        region_data = []
-        for region in caps.discovered_regions:
-            region_data.append({
-                "Address": f"0x{region.start_addr:04X} - 0x{region.end_addr:04X}",
-                "Dimensions": f"{region.width}x{region.height}",
-                "Color Mode": region.color_mode,
-                "Encrypted": "Yes" if region.encrypt else "No",
-                "Size": f"{region.length:,} bytes",
-            })
+            if caps.notes:
+                notes_html = "<br/>".join(f"• {html.escape(note)}" for note in caps.notes)
+                st.markdown(
+                    (
+                        "<div style='margin-top:0.2rem;padding:0.58rem 0.66rem;border-radius:10px;"
+                        "border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.02);"
+                        "font-size:0.9rem;line-height:1.35;'>"
+                        f"{notes_html}</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
 
-        st.dataframe(region_data, use_container_width=True, hide_index=True)
-    else:
-        st.info(
-            "📍 **Logo region not mapped for this model.** "
-            "Logo offsets are model/firmware specific and may require external analysis."
-        )
-
-    # Notes
-    if caps.notes:
-        st.markdown("#### Notes")
-        for note in caps.notes:
-            st.markdown(f"- {note}")
-
-    # All models summary
-    with st.expander("📋 All Registered Models"):
-        all_models_data = []
+    with st.expander("All Registered Models", expanded=False):
+        model_rows = []
         for model_name in registry_list_models():
-            cfg = registry_get_model(model_name)
-            if cfg:
-                region_info = "Unknown"
-                if cfg.logo_regions:
-                    r = cfg.logo_regions[0]
-                    region_info = f"0x{r.start_addr:04X} ({r.width}x{r.height})"
-
-                all_models_data.append({
-                    "Model": model_name,
-                    "Vendor": cfg.vendor,
-                    "Protocol": cfg.protocol.value.upper(),
-                    "Baud": cfg.baud_rate,
-                    "Logo Region": region_info,
-                })
-
-        st.dataframe(all_models_data, use_container_width=True, hide_index=True)
+            row = _build_model_capability_snapshot(model_name)
+            model_rows.append({
+                "Model": row["model"],
+                "Protocol": row["protocol"],
+                "Baud": row["baud"],
+                "Logo": "Mapped" if row["logo_mapped"] else "Unmapped",
+                "Ready Ops": f"{row['ready_ops']}/{row['total_ops']}",
+                "Risky Ops": row["risky_ops"],
+                "Moderate Ops": row["moderate_ops"],
+            })
+        model_rows.sort(key=lambda r: r["Model"])
+        all_height = min(46 + (len(model_rows) * 35), 320)
+        st.dataframe(model_rows, use_container_width=True, hide_index=True, height=all_height)
 
 
 # ============================================================================
@@ -603,6 +657,67 @@ def _connection_light(ports: list[str], port: str, probe: dict) -> tuple[str, st
     return "🔴", "Not connected"
 
 
+def _tooltip_icon_html(tooltip_rows: list[str], aria_label: str = "Details") -> str:
+    """Render a unified Step 1-style tooltip icon."""
+    rows = [
+        html.escape(str(row))
+        for row in tooltip_rows
+        if row is not None and str(row).strip()
+    ]
+    if not rows:
+        return ""
+    rows_html = "<br/>".join(rows)
+    return (
+        "<span class='conn-chip'>"
+        f"<span class='conn-chip-info' aria-label='{html.escape(aria_label)}'>i"
+        f"<span class='conn-chip-tip'>{rows_html}</span>"
+        "</span></span>"
+    )
+
+
+def _render_inline_toggle(
+    label: str,
+    tooltip_rows: list[str],
+    *,
+    key: str,
+    value: bool,
+    aria_label: str,
+    control_nudge_top: str = "0rem",
+    text_nudge_top: str = "0rem",
+) -> bool:
+    """Render a toggle + label + tooltip on a single row."""
+    toggle_col, text_col = st.columns([0.95, 6.05], gap="small", vertical_alignment="center")
+    with toggle_col:
+        if control_nudge_top != "0rem":
+            st.markdown(f"<div style='margin-top:{control_nudge_top};'></div>", unsafe_allow_html=True)
+        enabled = st.toggle(label, value=value, key=key, label_visibility="collapsed")
+    with text_col:
+        st.markdown(
+            (
+                "<div style='display:inline-flex;align-items:center;font-weight:600;line-height:1.15;"
+                f"margin-left:0.24rem;padding-top:{text_nudge_top};white-space:nowrap;'>"
+                f"{html.escape(label)}{_tooltip_icon_html(tooltip_rows, aria_label)}"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    return enabled
+
+
+def _render_section_header(title: str, tooltip_rows: Optional[list[str]] = None, aria_label: str = "Section help") -> None:
+    """Render a section header with optional aligned tooltip icon."""
+    tooltip_html = _tooltip_icon_html(tooltip_rows or [], aria_label) if tooltip_rows else ""
+    st.markdown(
+        (
+            "<div style='display:inline-flex;align-items:center;"
+            "font-size:2rem;font-weight:700;line-height:1.15;'>"
+            f"{html.escape(title)}{tooltip_html}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _status_chip(
     icon: str,
     label: str,
@@ -618,14 +733,7 @@ def _status_chip(
     }
     bg, fg = palette.get(tone, palette["warn"])
     detail_html = f"<span style='opacity:0.9;font-weight:400;'> · {detail}</span>" if detail else ""
-    tooltip_html = ""
-    if tooltip_rows:
-        rows = "<br/>".join(tooltip_rows)
-        tooltip_html = (
-            "<span class='conn-chip-info' aria-label='Connection details'>i"
-            f"<span class='conn-chip-tip'>{rows}</span>"
-            "</span>"
-        )
+    tooltip_html = _tooltip_icon_html(tooltip_rows or [], aria_label="Connection details")
     st.markdown(
         (
             f"<div class='conn-chip' style='padding:10px 14px;border-radius:12px;background:{bg};"
@@ -653,7 +761,7 @@ def _step3_mode_badge(model: str, payload_bytes: int, addr_mode: str, write_mode
     meta = f"{model} · {payload_bytes:,} bytes · {addr_mode}"
     st.markdown(
         (
-            f"<div style='padding-top:0.62rem;text-align:right;'>"
+            f"<div style='padding-top:0.02rem;text-align:right;'>"
             f"<span style='display:inline-block;padding:8px 12px;border-radius:10px;"
             f"background:{bg};border:1px solid {border};color:{fg};font-weight:700;'>"
             f"{mode_label}{debug_label}"
@@ -756,15 +864,16 @@ def tab_boot_logo_flasher():
     top_left, top_right = st.columns([1, 1])
 
     with top_left:
-        header_cols = st.columns([2.2, 1.2])
+        header_cols = st.columns([2.2, 1.2], vertical_alignment="center")
         with header_cols[0]:
-            st.markdown("#### Step 1 · Connection")
+            _render_section_header("Step 1 · Connection")
         with header_cols[1]:
-            st.session_state.connection_show_controls = st.toggle(
+            st.session_state.connection_show_controls = _render_inline_toggle(
                 "Show controls",
-                value=st.session_state.connection_show_controls,
+                ["Show or hide model and port selectors."],
                 key="connection_show_controls_toggle",
-                help="Show model/port selectors.",
+                value=st.session_state.connection_show_controls,
+                aria_label="Show controls help",
             )
 
         models = list(SERIAL_FLASH_CONFIGS.keys())
@@ -824,15 +933,20 @@ def tab_boot_logo_flasher():
             st.rerun()
 
     with top_right:
-        step2_header_cols = st.columns([2.0, 1.4])
+        step2_header_cols = st.columns([2.0, 1.2], vertical_alignment="center")
         with step2_header_cols[0]:
-            st.markdown("#### Step 2 · Logo")
+            step2_tip_rows = [
+                f"Auto-converted to {config['size'][0]}×{config['size'][1]} BMP.",
+                f"Max {BOOT_IMAGE_MAX_UPLOAD_MB} MB.",
+            ]
+            _render_section_header("Step 2 · Logo", step2_tip_rows, "Step 2 upload help")
         with step2_header_cols[1]:
-            logo_action_mode = st.toggle(
+            logo_action_mode = _render_inline_toggle(
                 "Backup mode",
-                value=st.session_state.get("logo_action_backup_mode", False),
+                ["Off: flash a new logo.", "On: backup/download current logo."],
                 key="logo_action_backup_mode",
-                help="Off = flash a new logo, On = backup/download current logo",
+                value=st.session_state.get("logo_action_backup_mode", False),
+                aria_label="Backup mode help",
             )
         if not logo_action_mode:
             uploaded_file = st.file_uploader(
@@ -840,10 +954,6 @@ def tab_boot_logo_flasher():
                 type=["bmp", "png", "jpg", "jpeg", "gif", "webp", "tiff"],
                 key="boot_logo_image",
                 label_visibility="collapsed",
-                help=(
-                    f"Auto-converted to {config['size'][0]}×{config['size'][1]} BMP. "
-                    f"Max {BOOT_IMAGE_MAX_UPLOAD_MB} MB."
-                ),
             )
             if uploaded_file:
                 try:
@@ -903,27 +1013,28 @@ def tab_boot_logo_flasher():
 
     st.divider()
     payload_bytes = config["size"][0] * config["size"][1] * 2
-    row_cols = st.columns([1.45, 1.05, 1.05, 3.5])
+    row_cols = st.columns([1.45, 1.2, 1.2, 3.2], vertical_alignment="center")
     with row_cols[0]:
-        st.markdown(
-            "<div style='padding-top:0.44rem;font-size:2rem;font-weight:700;line-height:1.15;'>Step 3 · Flash</div>",
-            unsafe_allow_html=True,
-        )
+        _render_section_header("Step 3 · Flash")
     with row_cols[1]:
-        st.markdown("<div style='padding-top:0.20rem;'></div>", unsafe_allow_html=True)
-        write_mode_enabled = st.toggle(
+        write_mode_enabled = _render_inline_toggle(
             "Write mode",
-            value=st.session_state.get("step3_write_mode", False),
+            ["Off: simulation mode.", "On: real flash write."],
             key="step3_write_mode",
-            help="Off = simulation, On = real flash",
+            value=st.session_state.get("step3_write_mode", False),
+            aria_label="Write mode help",
+            control_nudge_top="-0.24rem",
+            text_nudge_top="-0.04rem",
         )
     with row_cols[2]:
-        st.markdown("<div style='padding-top:0.20rem;'></div>", unsafe_allow_html=True)
-        debug_bytes = st.toggle(
+        debug_bytes = _render_inline_toggle(
             "Debug bytes",
-            value=st.session_state.get("step3_debug_bytes", False),
+            ["Dump payload/frame artifacts to out/streamlit_logo_debug."],
             key="step3_debug_bytes",
-            help="Dump payload/frame artifacts to out/streamlit_logo_debug.",
+            value=st.session_state.get("step3_debug_bytes", False),
+            aria_label="Debug bytes help",
+            control_nudge_top="-0.24rem",
+            text_nudge_top="-0.04rem",
         )
     with row_cols[3]:
         _step3_mode_badge(
@@ -980,8 +1091,6 @@ def _do_flash(
             tmp.write(bmp_bytes)
             bmp_path = tmp.name
 
-        st.markdown("---")
-
         # Create safety context using core module
         safety_ctx = create_streamlit_safety_context(
             risk_acknowledged=write_confirmed,
@@ -1016,49 +1125,53 @@ def _do_flash(
                 debug_output_dir="out/streamlit_logo_debug",
             )
 
+        # Hide progress UI once operation has finished.
+        progress_placeholder.empty()
+        status_placeholder.empty()
+
         # Success output
-        st.markdown("---")
         if not result.ok:
             raise Exception("\n".join(result.errors))
 
+        backup_path = None
         if simulate or result.metadata.get("simulated"):
             result_msg = result.metadata.get("result_message", "Simulation complete")
             st.info(f"✓ **Simulation complete:**\n{result_msg}")
             st.success("Ready for real flashing when you are!")
         else:
-            st.balloons()
             result_msg = result.metadata.get("result_message", "Flash successful!")
-            st.success(f"✅ **Flash successful!**\n{result_msg}")
             backup_path = _save_last_flash_backup(model, bmp_bytes)
-            st.caption(f"Saved last flashed logo backup: {backup_path}")
-            st.info(
-                """
-                **Next steps:**
-                1. Radio should reboot automatically
-                2. Check if new boot logo appears on startup
-                3. If not, try power cycling the radio
-                4. Close serial port in this app before using other tools
-                """
+            payload_bytes = config["size"][0] * config["size"][1] * 2
+            backup_hint = f"Last backup: {backup_path}"
+            tooltip_rows = [
+                f"Image {config['size'][0]}x{config['size'][1]} · Write mode {config.get('write_addr_mode', 'byte')}",
+                f"Payload bytes: {payload_bytes:,}",
+                backup_hint,
+                "If logo does not appear, power cycle the radio.",
+            ]
+            detail_icon_html = _tooltip_icon_html(tooltip_rows, aria_label="Flash details")
+            st.markdown(
+                (
+                    "<div style='padding:0.95rem 1rem; border-radius:0.75rem; "
+                    "border:1px solid rgba(70, 231, 165, 0.25); "
+                    "background:linear-gradient(90deg, rgba(28,129,95,0.26), rgba(28,129,95,0.12));'>"
+                    f"<div style='font-weight:700;'>✅ Flash successful! {result_msg} {detail_icon_html}</div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
             )
 
         if debug_bytes:
             st.caption("Debug artifacts: out/streamlit_logo_debug")
-        summary_cols = st.columns(3)
-        with summary_cols[0]:
-            st.metric("Image Size", f"{config['size'][0]}x{config['size'][1]}")
-        with summary_cols[1]:
-            st.metric("Payload Bytes", f"{config['size'][0] * config['size'][1] * 2:,}")
-        with summary_cols[2]:
-            st.metric("Write Mode", config.get("write_addr_mode", "byte"))
 
         # Show any warnings from the operation
         if result.warnings:
             structured_warnings = result_to_warnings(result)
-            render_warning_list(structured_warnings, collapsed=True)
+            render_warning_list(structured_warnings, collapsed_default=True)
 
-        # Show raw logs if present
         if result.logs:
-            render_raw_logs(result.logs)
+            with st.expander("📜 Raw Logs", expanded=False):
+                st.code("\n".join(result.logs), language="text")
 
     except WritePermissionError as e:
         render_status_error(f"Write not permitted: {e.reason}")

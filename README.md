@@ -1,182 +1,209 @@
 # Baofeng Logo Flasher
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
-[![CLI + Streamlit](https://img.shields.io/badge/interface-CLI%20%2B%20Streamlit-0A7EA4.svg)](src/baofeng_logo_flasher)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](pyproject.toml)
+Reliable local boot-logo flashing for supported Baofeng radios, with both CLI and Streamlit UI.
 
-Reliable boot-logo flashing for Baofeng UV-5RM and UV-17-family radios.
+## 1) Project overview
 
-## Overview
+Baofeng Logo Flasher lets you prepare and flash a boot logo to compatible radios over a USB serial cable.
 
-This repository provides a practical, working path for boot-logo flashing with:
-- direct serial A5 flashing (`upload-logo-serial`)
-- Streamlit UI backed by the same core logic
+Supported in the direct serial flashing path (`upload-logo-serial` / Streamlit Step 3):
+- `UV-5RM`
+- `UV-17Pro`
+- `UV-17R`
 
-Protocol-critical behavior implemented here:
-- UV-5RM/UV-17 A5 `CMD_WRITE` uses **chunk-index addressing** (`0,1,2,...`), not byte offsets.
+Also present in project model/config registries (capabilities, legacy/experimental flows):
+- `DM-32UV`
+- `UV-5RH Pro`
+- `UV-17R Pro`
+- `UV-5R`
+- `UV-5R-ORIG`
+- `UV-82`
+- `UV-6`
+- `F-11`
+- `A-58`
+- `UV-5G`
+- `F-8HP`
+- `UV-82HP`
+- `82X3`
 
-## Support Matrix
+## 2) What this tool does / does not do
 
-| Model | Direct A5 Flash | Address Mode | Status |
-|---|---|---|---|
-| `UV-5RM` | Yes (`upload-logo-serial`) | `chunk` | Working |
-| `UV-17Pro` | Yes (`upload-logo-serial`) | `chunk` | Configured |
-| `UV-17R` | Yes (`upload-logo-serial`) | `chunk` | Configured |
+What it does:
+- Flashes boot logos locally over serial.
+- Accepts image input and converts it for target radio requirements.
+- Provides safety gating for writes (`--write` and confirmation token).
+- Supports both command line and local Streamlit UI.
 
-## Prerequisites
+What it does not do:
+- No hosted/cloud/browser flashing service.
+- No direct A5 logo read-back for `UV-5RM` / `UV-17` A5 models.
+- No guarantee for every Baofeng variant/firmware outside listed supported flash path.
 
-- Python `3.9+`
-- USB serial cable connected to radio
-- macOS/Linux shell examples below (Windows users can adapt paths/activation)
+## 3) Requirements
 
-## Install (From Scratch)
+- OS: macOS, Linux, or Windows (with Python and serial access).
+- Python: `3.9+`.
+- Hardware: compatible radio + data-capable USB cable.
+- Access to serial/COM port permissions on your OS.
 
-Clone and enter the repo:
+## 4) Installation
+
+### Option A (recommended): Makefile setup
 
 ```bash
 git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
 cd Baofeng-Logo-Flasher
-```
-
-Create and activate a virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-Install CLI + Streamlit UI:
-
-```bash
-pip install -e ".[ui]"
-```
-
-Verify install:
-
-```bash
-baofeng-logo-flasher --help
-baofeng-logo-flasher-ui --help
-```
-
-Optional: use Make targets:
-
-```bash
 make install
 ```
 
-## Use (CLI)
+What `make install` does:
+- creates `.venv` if needed
+- installs package with `.[ui,dev]`
 
-1. Find your serial port:
+### Option B: manual venv setup
+
+```bash
+git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
+cd Baofeng-Logo-Flasher
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[ui]"
+```
+
+On Windows PowerShell, activate with:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[ui]"
+```
+
+Verify CLI command is available:
+
+```bash
+baofeng-logo-flasher --help
+```
+
+## 5) CLI usage
+
+### Useful discovery commands
 
 ```bash
 baofeng-logo-flasher ports
-```
-
-2. Check supported model names:
-
-```bash
 baofeng-logo-flasher list-models
 ```
 
-3. Run a dry operation first (no write to radio):
+### Recommended flashing flow (A5 serial path)
+
+1. Dry run first (no write):
 
 ```bash
 baofeng-logo-flasher upload-logo-serial \
-  --port /dev/cu.Plser \
+  --port /dev/cu.usbserial-XXXX \
   --in my_logo.png \
   --model UV-5RM
 ```
 
-4. Run a real write:
+2. Real write:
 
 ```bash
 baofeng-logo-flasher upload-logo-serial \
-  --port /dev/cu.Plser \
+  --port /dev/cu.usbserial-XXXX \
   --in my_logo.png \
   --model UV-5RM \
   --write --confirm WRITE
 ```
 
-## Use (Web UI)
-
-Start Streamlit:
-
-```bash
-baofeng-logo-flasher-ui
-```
-
-Or:
-
-```bash
-make serve
-```
-
-In the app:
-1. `Step 1 · Connection`: select model/port (or let auto-detect settle).
-2. `Step 2 · Logo`: upload image (auto-converted to radio format).
-3. `Step 3 · Flash`: keep `Write mode` off for simulation; enable it only when ready.
-
-## Notes
-
-- For UV-5RM/UV-17 family, A5 writes use chunk-index addressing internally.
-- Direct A5 logo read-back is not implemented in this repo.
-
-## Useful Commands
-
-| Command | Purpose |
-|---|---|
-| `baofeng-logo-flasher --help` | Full CLI help |
-| `baofeng-logo-flasher list-models` | Supported model configs |
-| `baofeng-logo-flasher show-model-config UV-5RM` | Effective model/protocol settings |
-| `baofeng-logo-flasher upload-logo-serial ...` | Direct serial logo upload |
-
-## Byte Debug Mode
+Optional byte/frame diagnostics:
 
 ```bash
 baofeng-logo-flasher upload-logo-serial \
-  --port /dev/cu.Plser \
+  --port /dev/cu.usbserial-XXXX \
   --in my_logo.png \
   --model UV-5RM \
   --write --confirm WRITE \
   --debug-bytes --debug-dir out/logo_debug
 ```
 
-Artifacts:
-- `image_payload.bin`
-- `write_payload_stream.bin`
-- `write_frames.bin`
-- `preview_row_major.png`
-- `manifest.json`
+## 6) Local UI usage (Streamlit)
 
-## Repository Layout
+Start locally with Makefile:
 
-| Path | Role |
-|---|---|
-| `src/baofeng_logo_flasher/cli.py` | CLI entrypoint |
-| `src/baofeng_logo_flasher/streamlit_ui.py` | Streamlit UI entrypoint |
-| `src/baofeng_logo_flasher/protocol/logo_protocol.py` | A5 framing/chunking/CRC/image payload |
-| `src/baofeng_logo_flasher/boot_logo.py` | Model serial-flash config/address mode |
-| `src/baofeng_logo_flasher/core/actions.py` | Shared CLI/UI workflow logic |
-| `tests/` | Regression tests |
-| `tools/` | Optional developer diagnostics |
+```bash
+make start
+```
 
-## Documentation
+Or run in foreground:
 
-Top-level docs:
-- `TROUBLESHOOTING.md`
-- `LOGO_PROTOCOL.md`
-- `DEVELOPMENT.md`
-- `CHANGELOG.md`
+```bash
+make serve
+```
 
-Supplemental docs:
-- `docs/UI_BEHAVIOR.md`
-- `docs/IMAGE_LAYOUT.md`
+Or launch via console script:
 
-## Contributing Notes
+```bash
+baofeng-logo-flasher-ui
+```
 
-Tests and tools remain in-repo for reliability and long-term maintenance.
-End users only need install + flash commands from this README.
+Or run Streamlit directly:
 
-## License
+```bash
+PYTHONPATH=src streamlit run src/baofeng_logo_flasher/streamlit_ui.py
+```
 
-MIT
+Open:
+- `http://localhost:8501`
+
+Stop background UI:
+
+```bash
+make stop
+```
+
+## 7) Step-by-step flashing walkthrough
+
+1. Connect radio via USB and power it on.
+2. Start UI (`make start`) and open `http://localhost:8501`.
+3. In **Step 1 · Connection**, select model and serial port.
+4. In **Step 2 · Logo**, upload your image.
+5. Confirm the app reports conversion to target size and readiness.
+6. In **Step 3 · Flash**, leave **Write mode** off and run simulation first.
+7. If simulation looks good, enable **Write mode**.
+8. Run flash.
+9. Wait for completion, then power-cycle the radio if needed to see the new logo.
+
+CLI-only equivalent:
+1. `baofeng-logo-flasher ports`
+2. `baofeng-logo-flasher upload-logo-serial ...` (dry run)
+3. `baofeng-logo-flasher upload-logo-serial ... --write --confirm WRITE`
+
+## 8) Safety notes
+
+- Always run a dry run/simulation before a real write.
+- Real writes require both `--write` and `--confirm WRITE` in CLI.
+- Use a stable USB cable and avoid disconnecting during flashing.
+- Double-check model selection before writing.
+- For A5 models (`UV-5RM` / `UV-17` family), direct read-back is not implemented.
+
+## 9) Troubleshooting
+
+- `command not found`:
+  - reinstall in active environment: `pip install -e .` or `pip install -e ".[ui]"`
+- missing dependency errors:
+  - install dependencies in your active venv.
+- serial port issues:
+  - run `baofeng-logo-flasher ports` and use full device path.
+- write blocked:
+  - include both `--write` and `--confirm WRITE`.
+- UI seems stale:
+  - `make stop` then `make start`.
+- need deeper diagnostics:
+  - run with `--debug-bytes` and inspect `out/logo_debug/manifest.json`.
+
+## 10) Where to get help / report issues
+
+- Check project docs:
+  - `TROUBLESHOOTING.md`
+  - `LOGO_PROTOCOL.md`
+  - `docs/UI_BEHAVIOR.md`
+- Report bugs or request features:
+  - https://github.com/XoniBlue/Baofeng-Logo-Flasher/issues

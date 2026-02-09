@@ -29,16 +29,16 @@ All notable changes to this project are documented in this file.
   - `tools/generate_logo_probes.py`
 
 ### Changed
-- Fixed UV-5RM/UV-17-family write addressing for A5 `CMD_WRITE`:
+Fixed (in this release) UV-5RM/UV-17-family write addressing for A5 `CMD_WRITE`:
   - switched to chunk-index addressing (`0,1,2,...`) for configured models.
-- Streamlit and CLI now use aligned serial flashing behavior through shared core actions.
-- Documentation overhaul for root-level discoverability and user-first workflows.
+Streamlit and CLI now use aligned serial flashing behavior through shared core actions.
+Documentation overhaul for root-level discoverability and user-first workflows.
 
 ### Removed
-- Redundant legacy helper scripts replaced by CLI commands:
+Redundant legacy helper scripts replaced by CLI commands:
   - `tools/inspect_img.py`
   - `tools/scan_bitmap_candidates.py`
-- Historical/local artifacts from tracked repository content.
+Historical/local artifacts from tracked repository content.
 
 ### Notes
-- This release resolves the common symptom where flash appeared successful but display showed a top-line fragment with gray/garbled remainder.
+- In previous versions, flash could appear successful but display would show a top-line fragment with gray/garbled remainder. This issue is now resolved in current releases.
