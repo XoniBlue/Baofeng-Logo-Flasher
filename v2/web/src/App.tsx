@@ -1,0 +1,211 @@
+import { useMemo, useRef, useState } from "react";
+import { browserConstraintMessage, isWebSerialSupported } from "./compat/browserSupport";
+import { CHUNK_SIZE, CMD_WRITE, IMAGE_BYTES } from "./protocol/constants";
+import { chunkImageData, calcWriteAddr } from "./protocol/chunking";
+import { buildFrame } from "./protocol/frame";
+import { imageFileTo565 } from "./protocol/image565";
+import { SERIAL_FLASH_CONFIGS } from "./protocol/modelConfigs";
+import { LogoUploader } from "./protocol/uploader";
+import { WebSerialPort } from "./serial/webSerialPort";
+import { loadModel, loadWriteMode, saveModel, saveWriteMode } from "./storage/settings";
+import { FlashPanel } from "./ui/components/FlashPanel";
+import { ImagePanel } from "./ui/components/ImagePanel";
+import { PortPanel } from "./ui/components/PortPanel";
+import { StatusLog } from "./ui/components/StatusLog";
+
+function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array {
+  const chunks = chunkImageData(payload, CHUNK_SIZE, false);
+  const frames = chunks.map((chunk) => {
+    const addr = calcWriteAddr(chunk.offset, CHUNK_SIZE, mode);
+    return buildFrame(CMD_WRITE, addr, chunk.data);
+  });
+  const total = frames.reduce((n, frame) => n + frame.length, 0);
+  const stream = new Uint8Array(total);
+  let offset = 0;
+  for (const frame of frames) {
+    stream.set(frame, offset);
+    offset += frame.length;
+  }
+  return stream;
+}
+
+function downloadBytes(name: string, bytes: Uint8Array): void {
+  const buffer = new Uint8Array(bytes).buffer as ArrayBuffer;
+  const blob = new Blob([buffer], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export default function App(): JSX.Element {
+  const webSerialSupported = isWebSerialSupported();
+  const defaultModel = SERIAL_FLASH_CONFIGS[0];
+  const loadedModel = loadModel(defaultModel.model);
+  const selectedFromStorage = SERIAL_FLASH_CONFIGS.find((item) => item.model === loadedModel) ?? defaultModel;
+
+  const [selectedModel, setSelectedModel] = useState(selectedFromStorage);
+  const [writeMode, setWriteMode] = useState(loadWriteMode());
+  const [handshakeProfile, setHandshakeProfile] = useState<"normal" | "conservative">("normal");
+  const [connected, setConnected] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [payload, setPayload] = useState<Uint8Array | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [logs, setLogs] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const serialRef = useRef(new WebSerialPort());
+
+  const canFlash = useMemo(() => payload !== null && (!writeMode || connected), [payload, writeMode, connected]);
+
+  const appendLog = (line: string): void => {
+    setLogs((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
+  };
+
+  const onSelectFile = async (file: File): Promise<void> => {
+    setError("");
+    setSuccess("");
+    const converted = await imageFileTo565(file, selectedModel.pixelOrder);
+    if (converted.bytes.length !== IMAGE_BYTES) {
+      throw new Error(`Payload size mismatch: expected ${IMAGE_BYTES}, got ${converted.bytes.length}`);
+    }
+    setPayload(converted.bytes);
+    setPreviewUrl(converted.previewUrl);
+    appendLog(`Image prepared (${converted.bytes.length} bytes)`);
+  };
+
+  const onConnect = async (): Promise<void> => {
+    setError("");
+    try {
+      await serialRef.current.requestPort();
+      setConnected(true);
+      appendLog("Serial port selected");
+    } catch (connectError) {
+      setError(String(connectError));
+    }
+  };
+
+  const onFlash = async (): Promise<void> => {
+    if (!payload) {
+      setError("Select an image first.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    setProgress(0);
+
+    try {
+      if (!writeMode) {
+        const frameStream = toFrameStream(payload, selectedModel.writeAddrMode);
+        downloadBytes("image_payload.bin", payload);
+        downloadBytes("write_frames.bin", frameStream);
+        setProgress(100);
+        setSuccess("Simulation complete. Payload and frame stream downloaded.");
+        appendLog(`Simulation complete (${frameStream.length} frame-stream bytes)`);
+        return;
+      }
+
+      const token = window.prompt("Type WRITE to confirm radio write:");
+      if ((token ?? "").trim().toUpperCase() !== "WRITE") {
+        throw new Error("Write confirmation token mismatch.");
+      }
+
+      const uploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
+      const debug = await uploader.upload(payload, {
+        addressMode: selectedModel.writeAddrMode,
+        pixelOrder: selectedModel.pixelOrder,
+        handshakeProfile,
+        progress: (sent, total) => {
+          setProgress(Math.min(100, Math.floor((sent / total) * 100)));
+        },
+        log: appendLog
+      });
+
+      downloadBytes("image_payload.bin", debug.payload);
+      downloadBytes("write_frames.bin", debug.frameStream);
+
+      setProgress(100);
+      setSuccess("Flash complete. Power cycle the radio to view the logo.");
+      appendLog(`Flash complete (${debug.frameCount} frames)`);
+    } catch (flashError) {
+      setError(String(flashError));
+      appendLog(`Error: ${String(flashError)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="app-shell">
+      <header>
+        <h1>Baofeng Logo Flasher v2</h1>
+        <p>Chrome-only Web Serial flasher for UV-5RM / UV-17 family.</p>
+      </header>
+
+      {!webSerialSupported ? <div className="error">{browserConstraintMessage()}</div> : null}
+
+      <section className="panel">
+        <h2>Profile</h2>
+        <label htmlFor="model">Model</label>
+        <select
+          id="model"
+          value={selectedModel.model}
+          onChange={(event) => {
+            const selected = SERIAL_FLASH_CONFIGS.find((item) => item.model === event.currentTarget.value);
+            if (selected) {
+              setSelectedModel(selected);
+              saveModel(selected.model);
+            }
+          }}
+        >
+          {SERIAL_FLASH_CONFIGS.map((item) => (
+            <option key={item.model} value={item.model}>
+              {item.model}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      <div className="grid">
+        <PortPanel connected={connected} onConnect={onConnect} disabled={!webSerialSupported || busy} />
+        <ImagePanel
+          previewUrl={previewUrl}
+          onSelectFile={async (file) => {
+            try {
+              await onSelectFile(file);
+            } catch (imageError) {
+              setError(String(imageError));
+            }
+          }}
+        />
+      </div>
+
+      <FlashPanel
+        writeMode={writeMode}
+        handshakeProfile={handshakeProfile}
+        progress={progress}
+        busy={busy}
+        canFlash={canFlash}
+        onWriteModeChange={(enabled) => {
+          setWriteMode(enabled);
+          saveWriteMode(enabled);
+        }}
+        onHandshakeProfileChange={setHandshakeProfile}
+        onFlash={onFlash}
+      />
+
+      {error ? <div className="error">{error}</div> : null}
+      {success ? <div className="success">{success}</div> : null}
+
+      <section className="panel">
+        <h2>Logs</h2>
+        <StatusLog logs={logs} />
+      </section>
+    </main>
+  );
+}

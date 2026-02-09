@@ -1,0 +1,26 @@
+name: v2 CI
+
+on:
+  push:
+    paths:
+      - 'v2/**'
+  pull_request:
+    paths:
+      - 'v2/**'
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: v2/web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
