@@ -9,6 +9,7 @@ interface FlashPanelProps {
   onFlash: () => Promise<void>;
 }
 
+/** Step 3 UI for write-mode controls and upload/simulation trigger. */
 export function FlashPanel({
   writeMode,
   handshakeProfile,

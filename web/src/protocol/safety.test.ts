@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { requireWritePermission, WRITE_CONFIRMATION_TOKEN } from "./safety";
 
+/** Verifies guard rails around confirmation token and simulation bypass behavior. */
 describe("safety policy", () => {
   it("allows simulation without token", () => {
     expect(() =>

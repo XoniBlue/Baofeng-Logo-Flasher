@@ -4,6 +4,7 @@ interface PortPanelProps {
   disabled: boolean;
 }
 
+/** Step 1 UI for requesting Web Serial port access from browser. */
 export function PortPanel({ connected, onConnect, disabled }: PortPanelProps): JSX.Element {
   return (
     <section className="panel">

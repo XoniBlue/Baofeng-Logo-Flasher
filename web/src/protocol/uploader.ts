@@ -26,12 +26,14 @@ import { sleep } from "./utils";
 import type { AddressMode, HandshakeDelayProfile, UploadOptions } from "./types";
 import { WebSerialPort } from "../serial/webSerialPort";
 
+/** Returned debug artifacts useful for parity checks and simulation mode output. */
 export interface UploadDebugArtifacts {
   payload: Uint8Array;
   frameStream: Uint8Array;
   frameCount: number;
 }
 
+/** Concrete timing values derived from requested handshake profile. */
 interface HandshakeTiming {
   profile: HandshakeDelayProfile;
   handshakeTimeoutMs: number;
@@ -39,17 +41,21 @@ interface HandshakeTiming {
   prewriteRetryDelayMs: number;
 }
 
+/** Implements full radio upload protocol sequence over Web Serial transport. */
 export class LogoUploader {
   constructor(private readonly serial: WebSerialPort, private readonly timeoutMs = 2000) {}
 
+  /** Matches timeout sentinel used by WebSerialPort read helpers. */
   private isReadTimeout(error: unknown): boolean {
     return error instanceof Error && error.message === "Read timeout";
   }
 
+  /** Small wrapper to keep transport writes centralized. */
   private async send(data: Uint8Array): Promise<void> {
     await this.serial.write(data);
   }
 
+  /** Reads one framed ACK while tolerating leading/trailing serial noise bytes. */
   private async recvAckFrame(timeoutMs: number): Promise<Uint8Array> {
     const deadline = Date.now() + timeoutMs;
     let collected = new Uint8Array(0);
@@ -104,6 +110,7 @@ export class LogoUploader {
     throw new Error(`Read timeout${collected.length > 0 ? ` (rx=${bytesToHex(collected)})` : ""}`);
   }
 
+  /** Maps handshake profile to concrete timeout/drain/retry values. */
   private getHandshakeTiming(profile: HandshakeDelayProfile): HandshakeTiming {
     if (profile === "conservative") {
       return {
@@ -121,6 +128,7 @@ export class LogoUploader {
     };
   }
 
+  /** Discards any buffered junk bytes after opening serial connection. */
   private async drainJunk(windowMs: number): Promise<void> {
     const deadline = Date.now() + windowMs;
     while (Date.now() < deadline) {
@@ -139,12 +147,14 @@ export class LogoUploader {
     }
   }
 
+  /** Opens serial transport and drains stale bytes before protocol exchange starts. */
   async open(baudRate: number, drainWindowMs: number): Promise<void> {
     await this.serial.open(baudRate);
     await sleep(TIMING_MS.openSettle);
     await this.drainJunk(drainWindowMs);
   }
 
+  /** Polls serial until a specific marker byte is observed or timeout expires. */
   private async readUntilContains(targetByte: number, timeoutMs: number): Promise<Uint8Array> {
     const deadline = Date.now() + timeoutMs;
     let collected = new Uint8Array(0);
@@ -179,6 +189,7 @@ export class LogoUploader {
     throw new Error(`Read timeout${collected.length > 0 ? ` (rx=${bytesToHex(collected)})` : ""}`);
   }
 
+  /** Performs multi-phase handshake with optional DTR/RTS pulse recovery. */
   async handshake(attempt: number, handshakeTimeoutMs: number, log?: UploadOptions["log"]): Promise<void> {
     const phases: Array<{ label: string; pulse: boolean; budget: number }> = [
       { label: "direct", pulse: false, budget: 0.6 },
@@ -210,11 +221,13 @@ export class LogoUploader {
     throw new Error(`Handshake failed: ${failures.join("; ")}`);
   }
 
+  /** Sends one-byte command to enter logo flashing mode. */
   async enterLogoMode(): Promise<void> {
     await this.send(new Uint8Array([LOGO_MODE_CMD]));
     await sleep(TIMING_MS.enterLogoMode);
   }
 
+  /** Sends initialization frame and validates device ACK response. */
   async sendInitFrame(): Promise<void> {
     const frame = buildFrame(CMD_INIT, 0x0000, new Uint8Array([0x50, 0x52, 0x4f, 0x47, 0x52, 0x41, 0x4d]));
     await this.send(frame);
@@ -228,6 +241,7 @@ export class LogoUploader {
     this.expectAckFrame(response, CMD_INIT, "Init frame");
   }
 
+  /** Sends config frame and validates device ACK response. */
   async sendConfigFrame(): Promise<void> {
     const frame = buildFrame(CMD_CONFIG, ADDR_CONFIG, CONFIG_PAYLOAD);
     await this.send(frame);
@@ -241,6 +255,7 @@ export class LogoUploader {
     this.expectAckFrame(response, CMD_CONFIG, "Config frame");
   }
 
+  /** Sends setup frame and validates device ACK response. */
   async sendSetupFrame(): Promise<void> {
     const frame = buildFrame(CMD_SETUP, 0x0000, SETUP_PAYLOAD);
     await this.send(frame);
@@ -254,6 +269,7 @@ export class LogoUploader {
     this.expectAckFrame(response, CMD_SETUP, "Setup frame");
   }
 
+  /** Validates ACK command/payload shape for init/config/setup responses. */
   private expectAckFrame(response: Uint8Array, expectedCmd: number, label: string): void {
     if (response.length < 7) {
       throw new Error(`${label}: incomplete response (${response.length} bytes)`);
@@ -265,6 +281,7 @@ export class LogoUploader {
     }
   }
 
+  /** Streams image chunks, tracks progress, and returns emitted frame artifacts. */
   async sendImageData(
     imageData: Uint8Array,
     addressMode: AddressMode,
@@ -326,6 +343,7 @@ export class LogoUploader {
     };
   }
 
+  /** Sends completion frame and tolerates radios that omit final response bytes. */
   async sendCompletionFrame(log?: UploadOptions["log"]): Promise<void> {
     const frame = buildFrame(CMD_COMPLETE, 0x0000, new Uint8Array([0x4f, 0x76, 0x65, 0x72]));
     await this.send(frame);
@@ -342,6 +360,7 @@ export class LogoUploader {
     }
   }
 
+  /** Executes prewrite protocol (handshake + init/config/setup) with retry policy. */
   private async runPrewritePhase(timing: HandshakeTiming, log?: UploadOptions["log"]): Promise<void> {
     for (let attempt = 1; attempt <= PREWRITE_MAX_ATTEMPTS; attempt += 1) {
       const attemptStartedAt = Date.now();
@@ -366,6 +385,7 @@ export class LogoUploader {
     }
   }
 
+  /** Advisory probe used by UI connect step to estimate protocol compatibility. */
   async probeIdentity(profile: HandshakeDelayProfile, log?: UploadOptions["log"]): Promise<boolean> {
     const profiles: HandshakeDelayProfile[] = profile === "conservative" ? ["conservative"] : ["normal", "conservative"];
     for (const candidate of profiles) {
@@ -386,6 +406,7 @@ export class LogoUploader {
     return false;
   }
 
+  /** Full upload flow with profile fallback, data transfer, and guaranteed close(). */
   async upload(imageData: Uint8Array, options: UploadOptions): Promise<UploadDebugArtifacts> {
     const requestedProfile = options.handshakeProfile ?? "normal";
     const profiles: HandshakeDelayProfile[] = requestedProfile === "conservative" ? ["conservative"] : ["normal", "conservative"];

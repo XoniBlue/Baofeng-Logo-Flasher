@@ -1,5 +1,6 @@
 const COUNTER_BASE_URL = "https://logo-flasher-counter.robbiem707-354.workers.dev";
 
+// Guards against duplicate increments caused by retries or repeated UI events.
 const completedSessions = new Set<string>();
 const inFlightSessions = new Set<string>();
 
@@ -11,6 +12,7 @@ interface IncrementResponse extends CountResponse {
   deduped?: boolean;
 }
 
+/** Fetches current global successful flash count from worker service. */
 export async function fetchGlobalFlashCount(): Promise<number> {
   const response = await fetch(`${COUNTER_BASE_URL}/count`, {
     method: "GET"
@@ -25,6 +27,7 @@ export async function fetchGlobalFlashCount(): Promise<number> {
   return body.total;
 }
 
+/** Increments global counter at most once per session ID within this page runtime. */
 export async function recordSuccessfulFlashOnce(sessionId: string): Promise<number | null> {
   if (!sessionId || completedSessions.has(sessionId) || inFlightSessions.has(sessionId)) {
     return null;

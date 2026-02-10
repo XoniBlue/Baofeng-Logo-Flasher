@@ -1,5 +1,6 @@
 import type { AddressMode, PixelOrder } from "./types";
 
+/** Per-radio defaults that shape upload behavior and image encoding. */
 export interface SerialFlashConfig {
   model: "UV-5RM" | "UV-17Pro" | "UV-17R";
   size: [number, number];
@@ -9,6 +10,7 @@ export interface SerialFlashConfig {
   pixelOrder: PixelOrder;
 }
 
+/** Supported models and protocol defaults derived from known-working captures. */
 export const SERIAL_FLASH_CONFIGS: SerialFlashConfig[] = [
   {
     model: "UV-5RM",

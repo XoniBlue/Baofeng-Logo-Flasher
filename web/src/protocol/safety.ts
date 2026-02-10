@@ -1,5 +1,6 @@
 export const WRITE_CONFIRMATION_TOKEN = "WRITE";
 
+/** Inputs required to validate potentially destructive flash operations. */
 export interface SafetyContextLike {
   writeEnabled: boolean;
   confirmationToken?: string | null;
@@ -9,6 +10,7 @@ export interface SafetyContextLike {
   simulate: boolean;
 }
 
+/** Enforces UI safety checks before any write-mode operation is allowed. */
 export function requireWritePermission(ctx: SafetyContextLike): void {
   if (ctx.simulate) {
     return;

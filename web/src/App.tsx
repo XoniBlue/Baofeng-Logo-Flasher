@@ -15,6 +15,7 @@ import { PortPanel } from "./ui/components/PortPanel";
 import { StatusLog } from "./ui/components/StatusLog";
 import { fetchGlobalFlashCount, recordSuccessfulFlashOnce } from "./ui/flashCounter";
 
+/** Builds contiguous frame stream used by simulation mode and debug parity checks. */
 function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array {
   const chunks = chunkImageData(payload, CHUNK_SIZE, false);
   const frames = chunks.map((chunk) => {
@@ -31,6 +32,7 @@ function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array 
   return stream;
 }
 
+/** Top-level flasher UI and orchestration logic for image prep and upload actions. */
 export default function App(): JSX.Element {
   const webSerialSupported = isWebSerialSupported();
   const defaultModel = SERIAL_FLASH_CONFIGS[0];
@@ -54,6 +56,7 @@ export default function App(): JSX.Element {
 
   const canFlash = useMemo(() => payload !== null && (!writeMode || connected), [payload, writeMode, connected]);
 
+  /** Appends timestamped log lines for protocol and UI events. */
   const appendLog = (line: string): void => {
     setLogs((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
   };
@@ -75,6 +78,7 @@ export default function App(): JSX.Element {
     };
   }, []);
 
+  /** Converts selected file into normalized RGB565 payload and preview image. */
   const onSelectFile = async (file: File): Promise<void> => {
     setError("");
     setSuccess("");
@@ -87,6 +91,7 @@ export default function App(): JSX.Element {
     appendLog(`Image prepared (${converted.bytes.length} bytes)`);
   };
 
+  /** Requests serial port and runs advisory probe without writing image data. */
   const onConnect = async (): Promise<void> => {
     setError("");
     setSuccess("");
@@ -107,6 +112,7 @@ export default function App(): JSX.Element {
     }
   };
 
+  /** Runs simulation or full upload depending on write mode toggle. */
   const onFlash = async (): Promise<void> => {
     if (!payload) {
       setError("Select an image first.");
@@ -129,6 +135,7 @@ export default function App(): JSX.Element {
         return;
       }
 
+      // Explicit confirmation gate before any irreversible device write.
       const token = window.prompt("Type WRITE to confirm radio write:");
       requireWritePermission({
         writeEnabled: writeMode,
@@ -151,6 +158,7 @@ export default function App(): JSX.Element {
         log: appendLog
       });
 
+      // Counter update is fire-and-forget so UI success is not blocked by network.
       void recordSuccessfulFlashOnce(flashSessionId).then((updatedCount) => {
         if (updatedCount !== null) {
           setTotalFlashes(updatedCount);

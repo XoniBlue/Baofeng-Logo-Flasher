@@ -3,6 +3,7 @@ import { PREWRITE_MAX_ATTEMPTS } from "./constants";
 import { LogoUploader } from "./uploader";
 import type { WebSerialPort } from "../serial/webSerialPort";
 
+/** Deterministic serial stub used to script read sequences for uploader tests. */
 class FakeSerialPort {
   private readQueue: Array<Uint8Array | Error>;
   private unreadBuffer = new Uint8Array(0);
@@ -44,6 +45,7 @@ class FakeSerialPort {
   }
 }
 
+/** Regression tests for protocol parity and error-tolerant handshake/ACK parsing. */
 describe("uploader parity", () => {
   it("matches main prewrite retry count", () => {
     expect(PREWRITE_MAX_ATTEMPTS).toBe(2);

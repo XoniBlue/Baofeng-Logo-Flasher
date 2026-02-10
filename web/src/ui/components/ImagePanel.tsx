@@ -3,6 +3,7 @@ interface ImagePanelProps {
   onSelectFile: (file: File) => Promise<void>;
 }
 
+/** Step 2 UI for image file selection and processed preview display. */
 export function ImagePanel({ previewUrl, onSelectFile }: ImagePanelProps): JSX.Element {
   return (
     <section className="panel">

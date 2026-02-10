@@ -1,6 +1,7 @@
 import { crc16Xmodem } from "./crc16_xmodem";
 import type { ParsedResponse } from "./types";
 
+/** Builds one protocol frame with header, payload length, and CRC16-XMODEM trailer. */
 export function buildFrame(cmd: number, addr: number, payload: Uint8Array): Uint8Array {
   const frame = new Uint8Array(1 + 1 + 2 + 2 + payload.length + 2);
   frame[0] = 0xa5;
@@ -17,6 +18,7 @@ export function buildFrame(cmd: number, addr: number, payload: Uint8Array): Uint
   return frame;
 }
 
+/** Parses a protocol response frame and returns decoded fields. */
 export function parseResponse(data: Uint8Array): ParsedResponse {
   if (data.length < 6 || data[0] !== 0xa5) {
     throw new Error(`Invalid response frame: ${bytesToHex(data)}`);
@@ -30,6 +32,7 @@ export function parseResponse(data: Uint8Array): ParsedResponse {
   return { cmd, addr, length, payload };
 }
 
+/** Formats bytes as lowercase contiguous hex for diagnostics/logging. */
 export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

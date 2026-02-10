@@ -1,10 +1,12 @@
 import type { AddressMode } from "./types";
 
+/** One protocol write unit with original image offset and payload bytes. */
 export interface Chunk {
   offset: number;
   data: Uint8Array;
 }
 
+/** Splits image payload into protocol-sized blocks, optionally zero-padding tail. */
 export function chunkImageData(imageData: Uint8Array, chunkSize: number, padLastChunk = false): Chunk[] {
   const chunks: Chunk[] = [];
   for (let offset = 0; offset < imageData.length; offset += chunkSize) {
@@ -19,6 +21,7 @@ export function chunkImageData(imageData: Uint8Array, chunkSize: number, padLast
   return chunks;
 }
 
+/** Converts byte offset to on-wire address according to selected write mode. */
 export function calcWriteAddr(offset: number, chunkSize: number, mode: AddressMode): number {
   if (mode === "byte") {
     return offset;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReadWritePort } from "./webSerialPort";
 import { WebSerialPort } from "./webSerialPort";
 
+/** Builds a fake ReadWritePort that delegates read behavior to provided implementation. */
 function createFakePort(readImpl: () => Promise<ReadableStreamReadResult<Uint8Array>>): ReadWritePort {
   const reader = {
     read: readImpl,
@@ -31,6 +32,7 @@ function createFakePort(readImpl: () => Promise<ReadableStreamReadResult<Uint8Ar
   };
 }
 
+/** Ensures pending read promise is reused across slice timeouts to avoid double reads. */
 describe("WebSerialPort read timeout behavior", () => {
   it("reuses pending reader promise across timeout retries", async () => {
     let resolveRead: (value: ReadableStreamReadResult<Uint8Array>) => void = () => undefined;

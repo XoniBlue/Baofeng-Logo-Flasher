@@ -1,3 +1,4 @@
+/** Computes CRC16-XMODEM checksum used by radio protocol frames. */
 export function crc16Xmodem(data: Uint8Array): number {
   let crc = 0;
   for (const value of data) {

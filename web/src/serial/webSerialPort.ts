@@ -8,6 +8,7 @@ declare global {
   }
 }
 
+/** Minimal serial port contract used by the uploader and tests. */
 export interface ReadWritePort {
   open(options: { baudRate: number; dataBits: 8; stopBits: 1; parity: "none"; flowControl: "none" }): Promise<void>;
   close(): Promise<void>;
@@ -16,6 +17,7 @@ export interface ReadWritePort {
   writable: WritableStream<Uint8Array> | null;
 }
 
+/** Thin wrapper around Web Serial with buffered reads and timeout-aware helpers. */
 export class WebSerialPort {
   private port: ReadWritePort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -23,10 +25,12 @@ export class WebSerialPort {
   private rxBuffer = new Uint8Array();
   private pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
 
+  /** Identifies locally-generated timeout errors so callers can retry slices safely. */
   private isReadTimeout(error: unknown): boolean {
     return error instanceof Error && error.message === "Read timeout";
   }
 
+  /** Prompts user to select a serial device and stores it for later open(). */
   async requestPort(): Promise<void> {
     if (!navigator.serial) {
       throw new Error("Web Serial API is not available in this browser");
@@ -34,6 +38,7 @@ export class WebSerialPort {
     this.port = (await navigator.serial.requestPort()) as ReadWritePort;
   }
 
+  /** Opens serial stream, sets modem lines high, and resets internal read state. */
   async open(baudRate: number): Promise<void> {
     if (!this.port) {
       throw new Error("No serial port selected");
@@ -50,6 +55,7 @@ export class WebSerialPort {
     this.pendingRead = null;
   }
 
+  /** Pulses DTR/RTS low then high to recover some radios before handshake. */
   async pulseSignals(lowMs = 40, highMs = 80): Promise<void> {
     if (!this.port) {
       throw new Error("Serial port not initialized");
@@ -60,6 +66,7 @@ export class WebSerialPort {
     await this.delay(highMs);
   }
 
+  /** Writes one raw buffer to serial stream. */
   async write(data: Uint8Array): Promise<void> {
     if (!this.writer) {
       throw new Error("Serial writer not initialized");
@@ -67,6 +74,7 @@ export class WebSerialPort {
     await this.writer.write(data);
   }
 
+  /** Reads available bytes up to timeout, reusing a pending read across retries. */
   async readAtMost(timeoutMs: number): Promise<Uint8Array> {
     if (!this.reader) {
       throw new Error("Serial reader not initialized");
@@ -97,6 +105,7 @@ export class WebSerialPort {
     return result.value ?? new Uint8Array();
   }
 
+  /** Pushes bytes back to front of internal buffer for subsequent reads. */
   unread(data: Uint8Array): void {
     if (data.length === 0) {
       return;
@@ -107,6 +116,7 @@ export class WebSerialPort {
     this.rxBuffer = merged;
   }
 
+  /** Reads exact byte count or throws timeout while preserving extra bytes in buffer. */
   async readExact(length: number, timeoutMs: number): Promise<Uint8Array> {
     if (length <= 0) {
       return new Uint8Array();
@@ -143,6 +153,7 @@ export class WebSerialPort {
     return out;
   }
 
+  /** Releases reader/writer and closes selected port. */
   async close(): Promise<void> {
     try {
       await this.reader?.cancel();
@@ -168,6 +179,7 @@ export class WebSerialPort {
     }
   }
 
+  /** Internal sleep helper used for signal pulse timing. */
   private async delay(ms: number): Promise<void> {
     await new Promise<void>((resolve) => {
       window.setTimeout(resolve, ms);

@@ -5,10 +5,12 @@ import { crc16Xmodem } from "./crc16_xmodem";
 import { buildFrame } from "./frame";
 import { rgbaTo565Bytes } from "./image565";
 
+/** Helper to keep expected byte assertions readable in tests. */
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Core protocol parity tests for framing, CRC, chunking, and RGB conversion. */
 describe("protocol core", () => {
   it("computes crc16 xmodem for PROGRAM", () => {
     const input = new TextEncoder().encode("PROGRAM");
