@@ -54,6 +54,15 @@ h2 {
 h1 {
   margin-bottom: 8px;
   font-size: clamp(1.65rem, 4vw, 2.4rem);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title-icon {
+  width: 1.05em;
+  height: 1.05em;
+  flex: 0 0 auto;
 }
 
 .hero p {

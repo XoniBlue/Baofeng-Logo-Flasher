@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Walkie-talkie favicon">
+  <defs>
+    <linearGradient id="body" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#2f3e4f" />
+      <stop offset="1" stop-color="#17212e" />
+    </linearGradient>
+    <linearGradient id="screen" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#54d1ff" />
+      <stop offset="1" stop-color="#1b7ed5" />
+    </linearGradient>
+  </defs>
+  <rect x="24" y="6" width="6" height="18" rx="3" fill="#a6b4c4" />
+  <rect x="20" y="18" width="24" height="40" rx="8" fill="url(#body)" stroke="#8ca3bb" stroke-width="2" />
+  <rect x="24" y="24" width="16" height="10" rx="2" fill="url(#screen)" />
+  <circle cx="27" cy="42" r="2" fill="#b9c8d8" />
+  <circle cx="33" cy="42" r="2" fill="#b9c8d8" />
+  <circle cx="39" cy="42" r="2" fill="#b9c8d8" />
+  <rect x="26" y="48" width="12" height="6" rx="2" fill="#0f1722" />
+  <path d="M44 14c4 2 6 5 6 9s-2 7-6 9" fill="none" stroke="#6ed2ff" stroke-linecap="round" stroke-width="2" />
+  <path d="M47 10c6 3 9 8 9 13s-3 10-9 13" fill="none" stroke="#6ed2ff" stroke-linecap="round" stroke-width="2" opacity="0.8" />
+</svg>

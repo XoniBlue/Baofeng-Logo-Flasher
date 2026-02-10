@@ -171,7 +171,7 @@ export default function App(): JSX.Element {
   return (
     <main className="app-shell">
       <header className="hero">
-        <h1>Baofeng UV Logo Flasher</h1>
+        <h1><img className="title-icon" src="/walkie-talkie.svg" alt="Handheld radio" /> Baofeng UV Logo Flasher</h1>
         <p>Chrome-only Web Serial flasher for UV-5RM and UV-17-family radios.</p>
         <div className="hero-badges">
           <div className="flash-counter-badge" role="status" aria-live="polite">
