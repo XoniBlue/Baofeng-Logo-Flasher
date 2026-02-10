@@ -1,0 +1,49 @@
+# Ignore patterns for git
+.venv/
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime
+*.img.bak
+backups/
+out/
+out/previews/
+*_payload.bin
+*.zip
+*.pcapng
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.log
+
+# Streamlit
+.streamlit/
+
+# Large local firmware/image artifacts
+Baofeng_5RM_MASTER.img
+main copy/
