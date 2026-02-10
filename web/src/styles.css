@@ -61,6 +61,18 @@ h1 {
   color: #c5d6ef;
 }
 
+.flash-counter-badge {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(118, 242, 198, 0.45);
+  background: rgba(11, 46, 40, 0.6);
+  color: #d5f7ee;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
 .panel {
   border: 1px solid var(--border);
   background: var(--panel);

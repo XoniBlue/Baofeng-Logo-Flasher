@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { browserConstraintMessage, isWebSerialSupported } from "./compat/browserSupport";
 import { CHUNK_SIZE, CMD_WRITE, IMAGE_BYTES } from "./protocol/constants";
 import { chunkImageData, calcWriteAddr } from "./protocol/chunking";
@@ -13,6 +13,7 @@ import { FlashPanel } from "./ui/components/FlashPanel";
 import { ImagePanel } from "./ui/components/ImagePanel";
 import { PortPanel } from "./ui/components/PortPanel";
 import { StatusLog } from "./ui/components/StatusLog";
+import { fetchGlobalFlashCount, recordSuccessfulFlashOnce } from "./ui/flashCounter";
 
 function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array {
   const chunks = chunkImageData(payload, CHUNK_SIZE, false);
@@ -47,6 +48,7 @@ export default function App(): JSX.Element {
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [totalFlashes, setTotalFlashes] = useState<number | null>(null);
 
   const serialRef = useRef(new WebSerialPort());
 
@@ -55,6 +57,23 @@ export default function App(): JSX.Element {
   const appendLog = (line: string): void => {
     setLogs((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
   };
+
+  useEffect(() => {
+    let mounted = true;
+    void fetchGlobalFlashCount()
+      .then((count) => {
+        if (mounted) {
+          setTotalFlashes(count);
+        }
+      })
+      .catch((counterError) => {
+        console.error("Flash counter fetch failed:", counterError);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const onSelectFile = async (file: File): Promise<void> => {
     setError("");
@@ -120,6 +139,7 @@ export default function App(): JSX.Element {
         simulate: false
       });
 
+      const flashSessionId = crypto.randomUUID();
       const uploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
       const { frameCount } = await uploader.upload(payload, {
         addressMode,
@@ -129,6 +149,12 @@ export default function App(): JSX.Element {
           setProgress(Math.min(100, Math.floor((sent / total) * 100)));
         },
         log: appendLog
+      });
+
+      void recordSuccessfulFlashOnce(flashSessionId).then((updatedCount) => {
+        if (updatedCount !== null) {
+          setTotalFlashes(updatedCount);
+        }
       });
 
       setProgress(100);
@@ -147,6 +173,7 @@ export default function App(): JSX.Element {
       <header className="hero">
         <h1>Baofeng UV Logo Flasher</h1>
         <p>Chrome-only Web Serial flasher for UV-5RM and UV-17-family radios.</p>
+        <div className="flash-counter-badge">Total flashes: {totalFlashes ?? "..."}</div>
       </header>
 
       {!webSerialSupported ? <div className="error">{browserConstraintMessage()}</div> : null}
