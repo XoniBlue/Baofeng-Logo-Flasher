@@ -62,15 +62,74 @@ h1 {
 }
 
 .flash-counter-badge {
-  display: inline-block;
-  margin-top: 10px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(118, 242, 198, 0.45);
-  background: rgba(11, 46, 40, 0.6);
-  color: #d5f7ee;
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(157, 175, 196, 0.38);
+  box-shadow: 0 4px 18px rgba(2, 8, 17, 0.35);
   font-size: 0.92rem;
   font-weight: 700;
+}
+
+.hero-badges {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.flash-counter-badge-label,
+.flash-counter-badge-value {
+  padding: 4px 10px;
+  line-height: 1.25;
+}
+
+.flash-counter-badge-label {
+  color: #e3ebf7;
+  background: linear-gradient(180deg, #4a5565 0%, #3c4655 100%);
+}
+
+.flash-counter-badge-value {
+  color: #f2fbff;
+  background: linear-gradient(180deg, #21a3cc 0%, #1d7db0 100%);
+  border-left: 1px solid rgba(15, 28, 45, 0.35);
+  min-width: 44px;
+  text-align: center;
+}
+
+.info-badge {
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(157, 175, 196, 0.38);
+  box-shadow: 0 4px 18px rgba(2, 8, 17, 0.35);
+  text-decoration: none;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.info-badge-label,
+.info-badge-value {
+  padding: 4px 10px;
+  line-height: 1.25;
+}
+
+.info-badge-label {
+  color: #e3ebf7;
+  background: linear-gradient(180deg, #4a5565 0%, #3c4655 100%);
+}
+
+.info-badge-value {
+  color: #eff9ff;
+  background: linear-gradient(180deg, #4080d9 0%, #3367b8 100%);
+  border-left: 1px solid rgba(15, 28, 45, 0.35);
+}
+
+.info-badge:hover {
+  filter: brightness(1.05);
 }
 
 .panel {
@@ -222,5 +281,9 @@ progress::-moz-progress-bar {
   .hero {
     padding: 14px;
     text-align: left;
+  }
+
+  .hero-badges {
+    justify-content: flex-start;
   }
 }

@@ -173,7 +173,16 @@ export default function App(): JSX.Element {
       <header className="hero">
         <h1>Baofeng UV Logo Flasher</h1>
         <p>Chrome-only Web Serial flasher for UV-5RM and UV-17-family radios.</p>
-        <div className="flash-counter-badge">Total flashes: {totalFlashes ?? "..."}</div>
+        <div className="hero-badges">
+          <div className="flash-counter-badge" role="status" aria-live="polite">
+            <span className="flash-counter-badge-label">Total flashes</span>
+            <span className="flash-counter-badge-value">{totalFlashes ?? "..."}</span>
+          </div>
+          <a className="info-badge" href="https://github.com/XoniBlue/Baofeng-Logo-Flasher" target="_blank" rel="noreferrer">
+            <span className="info-badge-label">Repo</span>
+            <span className="info-badge-value">Baofeng-Logo-Flasher</span>
+          </a>
+        </div>
       </header>
 
       {!webSerialSupported ? <div className="error">{browserConstraintMessage()}</div> : null}
