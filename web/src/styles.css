@@ -1,3 +1,4 @@
+/* Global design tokens used across all panels and controls. */
 :root {
   --bg: #040a14;
   --bg-soft: #081425;
@@ -14,10 +15,12 @@
   --radius: 14px;
 }
 
+/* Base box model normalization. */
 * {
   box-sizing: border-box;
 }
 
+/* App-level backdrop and typography foundation. */
 body {
   margin: 0;
   font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
@@ -29,12 +32,14 @@ body {
   min-height: 100vh;
 }
 
+/* Main page layout container. */
 .app-shell {
   max-width: 1020px;
   margin: 0 auto;
   padding: 22px 16px 40px;
 }
 
+/* Hero header card with title and project metadata badges. */
 .hero {
   margin-bottom: 16px;
   border: 1px solid var(--border);
@@ -70,6 +75,7 @@ h1 {
   color: #c5d6ef;
 }
 
+/* Counter/repo badges shown under the hero description. */
 .flash-counter-badge {
   display: inline-flex;
   align-items: stretch;
@@ -141,6 +147,7 @@ h1 {
   filter: brightness(1.05);
 }
 
+/* Reusable panel shell for each wizard-like step. */
 .panel {
   border: 1px solid var(--border);
   background: var(--panel);
@@ -155,12 +162,14 @@ h1 {
   font-size: 1.04rem;
 }
 
+/* Two-column desktop layout collapsing to one column on small screens. */
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
 
+/* Shared control styling for form inputs and buttons. */
 button,
 select,
 input[type="file"] {
@@ -204,6 +213,7 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* Processed logo preview area. */
 .preview {
   margin-top: 12px;
   width: 100%;
@@ -213,6 +223,7 @@ button:disabled {
   background: #000;
 }
 
+/* Inline checkbox row used by write mode toggle. */
 .inline-check {
   display: flex;
   align-items: center;
@@ -224,6 +235,7 @@ button:disabled {
   width: auto;
 }
 
+/* Operation status banners for failures/successes. */
 .error,
 .success {
   border-radius: 10px;
@@ -243,6 +255,7 @@ button:disabled {
   background: rgba(20, 83, 45, 0.25);
 }
 
+/* Scrollable protocol log output panel. */
 .log-box {
   max-height: 260px;
   overflow: auto;
@@ -257,6 +270,7 @@ button:disabled {
   color: var(--muted);
 }
 
+/* Native progress element visual tuning. */
 progress {
   width: 100%;
   margin-bottom: 10px;
@@ -278,6 +292,7 @@ progress::-moz-progress-bar {
   border-radius: 999px;
 }
 
+/* Mobile layout adjustments. */
 @media (max-width: 780px) {
   .app-shell {
     padding-top: 16px;

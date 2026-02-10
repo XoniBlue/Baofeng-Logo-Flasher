@@ -81,12 +81,14 @@ export class WebSerialPort {
     }
 
     if (this.rxBuffer.length > 0) {
+      // Serve unread/previously buffered bytes before touching the stream again.
       const data = this.rxBuffer;
       this.rxBuffer = new Uint8Array();
       return data;
     }
 
     if (!this.pendingRead) {
+      // Reuse one outstanding reader.read() across timeout slices/callers.
       this.pendingRead = this.reader.read().finally(() => {
         this.pendingRead = null;
       });
@@ -131,6 +133,7 @@ export class WebSerialPort {
 
       let chunk: Awaited<ReturnType<WebSerialPort["readAtMost"]>> = new Uint8Array(0);
       try {
+        // Keep each wait short so deadline enforcement stays responsive.
         chunk = await this.readAtMost(Math.min(remainingMs, 120));
       } catch (error) {
         if (!this.isReadTimeout(error)) {
@@ -148,6 +151,7 @@ export class WebSerialPort {
       this.rxBuffer = merged;
     }
 
+    // Return exactly requested bytes and preserve any extra for next read.
     const out = this.rxBuffer.slice(0, length);
     this.rxBuffer = this.rxBuffer.slice(length);
     return out;

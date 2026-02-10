@@ -61,6 +61,7 @@ export class LogoUploader {
     let collected = new Uint8Array(0);
 
     while (Date.now() < deadline) {
+      // Resynchronize on frame start marker in case previous reads contained junk.
       const startIndex = collected.indexOf(0xa5);
       if (startIndex > 0) {
         collected = collected.slice(startIndex);
@@ -70,6 +71,7 @@ export class LogoUploader {
       }
 
       if (collected.length >= 6) {
+        // Header is complete: evaluate length and only accept plausible ACK-sized frames.
         const payloadLength = (collected[4] << 8) | collected[5];
         const frameLength = 1 + 1 + 2 + 2 + payloadLength + 2;
         if (payloadLength <= 32 && collected.length >= frameLength) {
@@ -92,6 +94,7 @@ export class LogoUploader {
         break;
       }
       try {
+        // Read in short slices so timeout/error messages include partial bytes.
         const chunk = await this.serial.readAtMost(Math.min(remainingMs, 120));
         if (chunk.length === 0) {
           continue;
@@ -166,6 +169,7 @@ export class LogoUploader {
       }
 
       try {
+        // Poll in bounded slices so we can keep accumulating data until deadline.
         const chunk = await this.serial.readAtMost(Math.min(remainingMs, 120));
         if (chunk.length === 0) {
           continue;
@@ -198,6 +202,7 @@ export class LogoUploader {
     const failures: string[] = [];
 
     for (const phase of phases) {
+      // Split global handshake budget per phase to guarantee retry time remains.
       const phaseTimeoutMs = Math.max(300, Math.floor(handshakeTimeoutMs * phase.budget));
       try {
         if (phase.pulse) {
@@ -302,6 +307,7 @@ export class LogoUploader {
       }
       await this.send(frame);
       await sleep(TIMING_MS.writeChunk);
+      // First data ACK can arrive slower on some radios right after setup frame.
       const chunkTimeoutMs = chunk.offset === 0 ? Math.max(writeAckTimeoutMs, 4500) : writeAckTimeoutMs;
       let response: Uint8Array;
       try {
@@ -317,6 +323,7 @@ export class LogoUploader {
         );
       }
       const parsed = parseResponse(response);
+      // Radios may ACK data with dedicated ACK command or WRITE + 0x59 payload.
       const ackOk = parsed.cmd === CMD_DATA_ACK || (parsed.cmd === CMD_WRITE && parsed.payload[0] === 0x59);
       if (!ackOk) {
         throw new Error(
@@ -332,6 +339,7 @@ export class LogoUploader {
     const frameStream = new Uint8Array(totalLen);
     let offset = 0;
     for (const frame of frames) {
+      // Preserve exact emitted frame stream for optional diagnostics/simulation parity.
       frameStream.set(frame, offset);
       offset += frame.length;
     }
@@ -379,6 +387,7 @@ export class LogoUploader {
         if (attempt >= PREWRITE_MAX_ATTEMPTS) {
           throw error;
         }
+        // Back off briefly so modem line/power state can settle before retrying.
         log?.(`Prewrite attempt ${attempt}/${PREWRITE_MAX_ATTEMPTS} failed after ${elapsedMs} ms: ${String(error)}`);
         await sleep(timing.prewriteRetryDelayMs);
       }
@@ -426,6 +435,7 @@ export class LogoUploader {
         if (candidate === profiles[profiles.length - 1]) {
           throw error;
         }
+        // Retry once with more conservative timing before giving up.
         options.log?.(`Falling back to conservative handshake timing after ${candidate} failure`);
       }
     }
