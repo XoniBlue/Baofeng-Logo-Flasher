@@ -144,9 +144,9 @@ export default function App(): JSX.Element {
 
   return (
     <main className="app-shell">
-      <header>
-        <h1>Baofeng Logo Flasher v2</h1>
-        <p>Chrome-only Web Serial flasher for UV-5RM / UV-17 family.</p>
+      <header className="hero">
+        <h1>Baofeng UV Logo Flasher</h1>
+        <p>Chrome-only Web Serial flasher for UV-5RM and UV-17-family radios.</p>
       </header>
 
       {!webSerialSupported ? <div className="error">{browserConstraintMessage()}</div> : null}
