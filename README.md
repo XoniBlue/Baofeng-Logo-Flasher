@@ -330,3 +330,5 @@ For deep, code-grounded documentation (architecture, runtime flow, configuration
 ## License
 
 MIT
+
+Main application code location: .
