@@ -331,4 +331,4 @@ For deep, code-grounded documentation (architecture, runtime flow, configuration
 
 MIT
 
-Main application code location: .
+Main application code location: `/Baofeng_Logo_Flasher`.
