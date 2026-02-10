@@ -14,6 +14,7 @@ import { ImagePanel } from "./ui/components/ImagePanel";
 import { PortPanel } from "./ui/components/PortPanel";
 import { StatusLog } from "./ui/components/StatusLog";
 import { fetchGlobalFlashCount, recordSuccessfulFlashOnce } from "./ui/flashCounter";
+import walkieTalkieIcon from "../walkie-talkie.svg";
 
 /** Builds contiguous frame stream used by simulation mode and debug parity checks. */
 function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array {
@@ -179,7 +180,7 @@ export default function App(): JSX.Element {
   return (
     <main className="app-shell">
       <header className="hero">
-        <h1><img className="title-icon" src="/walkie-talkie.svg" alt="Handheld radio" /> Baofeng UV Logo Flasher</h1>
+        <h1><img className="title-icon" src={walkieTalkieIcon} alt="Handheld radio" /> Baofeng UV Logo Flasher</h1>
         <p>Chrome-only Web Serial flasher for UV-5RM and UV-17-family radios.</p>
         <div className="hero-badges">
           <div className="flash-counter-badge" role="status" aria-live="polite">
