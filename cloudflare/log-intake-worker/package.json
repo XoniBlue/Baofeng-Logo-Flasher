@@ -1,0 +1,18 @@
+{
+  "name": "baofeng-log-intake-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "d1:migrate": "wrangler d1 execute baofeng_logs --file ./schema.sql",
+    "recent": "node ./scripts/recent.mjs",
+    "retention:30d": "wrangler d1 execute baofeng_logs --remote --file ./queries/delete_older_than_30_days.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260204.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.33.0"
+  }
+}

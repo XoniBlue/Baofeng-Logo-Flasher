@@ -14,6 +14,7 @@ import { ImagePanel } from "./ui/components/ImagePanel";
 import { PortPanel } from "./ui/components/PortPanel";
 import { StatusLog } from "./ui/components/StatusLog";
 import { fetchGlobalFlashCount, recordSuccessfulFlashOnce } from "./ui/flashCounter";
+import { reportClientError } from "./ui/clientLogReporter";
 import walkieTalkieIcon from "../walkie-talkie.svg";
 
 /** Builds contiguous frame stream used by simulation mode and debug parity checks. */
@@ -42,7 +43,6 @@ export default function App(): JSX.Element {
 
   const [selectedModel, setSelectedModel] = useState(selectedFromStorage);
   const [writeMode, setWriteMode] = useState(loadWriteMode());
-  const [handshakeProfile, setHandshakeProfile] = useState<"normal" | "conservative">("normal");
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -58,8 +58,10 @@ export default function App(): JSX.Element {
   const canFlash = useMemo(() => payload !== null && (!writeMode || connected), [payload, writeMode, connected]);
 
   /** Appends timestamped log lines for protocol and UI events. */
-  const appendLog = (line: string): void => {
-    setLogs((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
+  const appendLog = (line: string): string => {
+    const stamped = `[${new Date().toISOString()}] ${line}`;
+    setLogs((prev) => [...prev, stamped]);
+    return stamped;
   };
 
   useEffect(() => {
@@ -79,6 +81,49 @@ export default function App(): JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    const handleWindowError = (event: ErrorEvent): void => {
+      reportClientError({
+        eventType: "window_error",
+        message: event.message || "Unhandled window error",
+        errorName: event.error?.name,
+        stack: event.error?.stack,
+        model: selectedModel.model,
+        writeMode,
+        connected
+      });
+    };
+    const handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
+      const reason = event.reason;
+      if (reason instanceof Error) {
+        reportClientError({
+          eventType: "unhandled_rejection",
+          message: reason.message,
+          errorName: reason.name,
+          stack: reason.stack,
+          model: selectedModel.model,
+          writeMode,
+          connected
+        });
+        return;
+      }
+      reportClientError({
+        eventType: "unhandled_rejection",
+        message: String(reason ?? "Unhandled rejection"),
+        model: selectedModel.model,
+        writeMode,
+        connected
+      });
+    };
+
+    window.addEventListener("error", handleWindowError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", handleWindowError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, [connected, selectedModel.model, writeMode]);
+
   /** Converts selected file into normalized RGB565 payload and preview image. */
   const onSelectFile = async (file: File): Promise<void> => {
     setError("");
@@ -96,20 +141,35 @@ export default function App(): JSX.Element {
   const onConnect = async (): Promise<void> => {
     setError("");
     setSuccess("");
+    const connectLogs: string[] = [];
+    const logConnect = (line: string): void => {
+      connectLogs.push(appendLog(line));
+    };
     try {
       await serialRef.current.requestPort();
       setConnected(true);
-      appendLog("Serial port selected");
+      logConnect("Serial port selected");
       const probeUploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
-      const probeOk = await probeUploader.probeIdentity(handshakeProfile, appendLog);
+      const probeOk = await probeUploader.probeIdentity(logConnect);
       if (probeOk) {
         setSuccess("Advisory probe succeeded. Radio responded to A5 handshake.");
-        appendLog("Advisory identity probe: high confidence (A5 handshake ACK)");
+        logConnect("Advisory identity probe: high confidence (A5 handshake ACK)");
       } else {
-        appendLog("Advisory identity probe: low confidence (no A5 handshake ACK)");
+        logConnect("Advisory identity probe: low confidence (no A5 handshake ACK)");
       }
     } catch (connectError) {
-      setError(String(connectError));
+      const errorText = String(connectError);
+      setError(errorText);
+      reportClientError({
+        eventType: "connect_error",
+        message: errorText,
+        errorName: connectError instanceof Error ? connectError.name : undefined,
+        stack: connectError instanceof Error ? connectError.stack : undefined,
+        model: selectedModel.model,
+        writeMode,
+        connected,
+        logLines: connectLogs
+      });
     }
   };
 
@@ -124,15 +184,20 @@ export default function App(): JSX.Element {
     setSuccess("");
     setProgress(0);
 
+    const flashLogs: string[] = [];
+    const logFlash = (line: string): void => {
+      flashLogs.push(appendLog(line));
+    };
+
     try {
       const addressMode = "chunk" as const;
-      appendLog(`Write address mode: ${addressMode.toUpperCase()}`);
+      logFlash(`Write address mode: ${addressMode.toUpperCase()}`);
 
       if (!writeMode) {
         const frameStream = toFrameStream(payload, addressMode);
         setProgress(100);
         setSuccess("Simulation complete.");
-        appendLog(`Simulation complete (${frameStream.length} frame-stream bytes)`);
+        logFlash(`Simulation complete (${frameStream.length} frame-stream bytes)`);
         return;
       }
 
@@ -152,11 +217,10 @@ export default function App(): JSX.Element {
       const { frameCount } = await uploader.upload(payload, {
         addressMode,
         pixelOrder: selectedModel.pixelOrder,
-        handshakeProfile,
         progress: (sent, total) => {
           setProgress(Math.min(100, Math.floor((sent / total) * 100)));
         },
-        log: appendLog
+        log: logFlash
       });
 
       // Counter update is fire-and-forget so UI success is not blocked by network.
@@ -168,10 +232,21 @@ export default function App(): JSX.Element {
 
       setProgress(100);
       setSuccess("Flash complete. Power cycle the radio to view the logo.");
-      appendLog(`Flash complete (${frameCount} frames)`);
+      logFlash(`Flash complete (${frameCount} frames)`);
     } catch (flashError) {
-      setError(String(flashError));
-      appendLog(`Error: ${String(flashError)}`);
+      const errorText = String(flashError);
+      setError(errorText);
+      flashLogs.push(appendLog(`Error: ${errorText}`));
+      reportClientError({
+        eventType: "flash_error",
+        message: errorText,
+        errorName: flashError instanceof Error ? flashError.name : undefined,
+        stack: flashError instanceof Error ? flashError.stack : undefined,
+        model: selectedModel.model,
+        writeMode,
+        connected,
+        logLines: flashLogs
+      });
     } finally {
       setBusy(false);
     }
@@ -234,7 +309,6 @@ export default function App(): JSX.Element {
 
       <FlashPanel
         writeMode={writeMode}
-        handshakeProfile={handshakeProfile}
         progress={progress}
         busy={busy}
         canFlash={canFlash}
@@ -242,7 +316,6 @@ export default function App(): JSX.Element {
           setWriteMode(enabled);
           saveWriteMode(enabled);
         }}
-        onHandshakeProfileChange={setHandshakeProfile}
         onFlash={onFlash}
       />
 

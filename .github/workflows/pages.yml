@@ -38,6 +38,9 @@ jobs:
         run: npm test
 
       - name: Build
+        env:
+          VITE_APP_VERSION: ${{ github.sha }}
+          VITE_LOG_INGEST_URL: ${{ vars.VITE_LOG_INGEST_URL }}
         run: npm run build
 
       - name: Configure Pages

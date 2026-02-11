@@ -25,10 +25,11 @@ Browser-based Baofeng boot logo flasher using Web Serial. This branch hosts the 
 - [5) Local development](#5-local-development)
 - [6) Testing and build](#6-testing-and-build)
 - [7) GitHub Pages deployment](#7-github-pages-deployment)
-- [8) Safety notes](#8-safety-notes)
-- [9) Supported models and behavior](#9-supported-models-and-behavior)
-- [10) Troubleshooting](#10-troubleshooting)
-- [11) Repository layout](#11-repository-layout)
+- [8) Client diagnostic logging (Cloudflare)](#8-client-diagnostic-logging-cloudflare)
+- [9) Safety notes](#9-safety-notes)
+- [10) Supported models and behavior](#10-supported-models-and-behavior)
+- [11) Troubleshooting](#11-troubleshooting)
+- [12) Repository layout](#12-repository-layout)
 
 ---
 
@@ -132,7 +133,73 @@ If a push does not appear immediately, check Actions:
 
 ---
 
-## 8) Safety notes
+## 8) Client diagnostic logging (Cloudflare)
+
+The web app can optionally send client-side error diagnostics (for example Web Serial failures) to a Cloudflare Worker.
+
+Transparency policy:
+- Logging is error-focused only (no full session/activity tracking).
+- Logs are used for troubleshooting radio flash failures and compatibility issues.
+
+What is sent:
+- Error type/message/stack (truncated).
+- Model, write mode, and connection state.
+- Timestamped in-app protocol log lines (truncated).
+
+What is not sent:
+- Uploaded image payload bytes.
+- Serial frame binary data.
+- Browser user-agent, URL path/query, origin header, or IP-derived fields.
+
+### Setup steps
+
+1. Deploy the Worker in `cloudflare/log-intake-worker/`:
+```bash
+cd cloudflare/log-intake-worker
+npm ci
+wrangler d1 create baofeng_logs
+# paste returned database_id into wrangler.toml
+wrangler d1 execute baofeng_logs --file ./schema.sql --remote
+wrangler secret put ADMIN_TOKEN
+npm run deploy
+```
+2. Copy Worker ingest URL:
+   - `https://<worker-subdomain>.workers.dev/client-log`
+3. In GitHub repo settings, add **Repository variable**:
+   - `VITE_LOG_INGEST_URL` = Worker ingest URL.
+4. Push to `web-dev` so Pages rebuilds with that env var.
+
+### Local development
+
+Create `web/.env.local`:
+```bash
+VITE_APP_VERSION=dev-local
+VITE_LOG_INGEST_URL=https://<worker-subdomain>.workers.dev/client-log
+```
+
+### Reading logs
+
+Direct D1 query:
+```bash
+cd cloudflare/log-intake-worker
+wrangler d1 execute baofeng_logs --remote --file ./queries/recent_failures.sql
+```
+
+API query (admin token required):
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "https://<worker-subdomain>.workers.dev/recent?limit=50"
+```
+
+Retention cleanup (delete logs older than 30 days):
+```bash
+cd cloudflare/log-intake-worker
+npm run retention:30d
+```
+
+---
+
+## 9) Safety notes
 
 - Keep **Write mode off** until simulation succeeds.
 - When prompted, type `WRITE` only when you are sure the model/profile is correct.
@@ -141,7 +208,7 @@ If a push does not appear immediately, check Actions:
 
 ---
 
-## 9) Supported models and behavior
+## 10) Supported models and behavior
 
 This app targets UV-5RM / UV-17-family logo flashing workflows and follows the protocol reference captured in:
 
@@ -151,7 +218,7 @@ The reference defines constants, frame structure, CRC behavior, safety expectati
 
 ---
 
-## 10) Troubleshooting
+## 11) Troubleshooting
 
 ### Browser does not show serial devices
 
@@ -171,10 +238,12 @@ The reference defines constants, frame structure, CRC behavior, safety expectati
 
 ---
 
-## 11) Repository layout
+## 12) Repository layout
 
 ```text
 .
+├─ cloudflare/
+│  └─ log-intake-worker/    # Worker + D1 schema for client diagnostics
 ├─ web/
 │  ├─ src/                  # React app source
 │  ├─ package.json          # Scripts and deps

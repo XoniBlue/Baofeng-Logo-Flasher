@@ -1,0 +1,13 @@
+name = "baofeng-log-intake"
+main = "src/index.ts"
+compatibility_date = "2026-02-11"
+
+[[d1_databases]]
+binding = "LOG_DB"
+database_name = "baofeng_logs"
+database_id = "5b735ced-dba1-4ea2-a4df-1e61b118a06d"
+
+
+[vars]
+ALLOWED_ORIGINS = "https://xoniblue.github.io,http://localhost:5173,http://127.0.0.1:5173"
+

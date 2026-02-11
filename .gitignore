@@ -1,3 +1,6 @@
 web/node_modules/
 web/dist/
 web/tsconfig.tsbuildinfo
+web/.env.local
+cloudflare/log-intake-worker/node_modules/
+cloudflare/log-intake-worker/.wrangler/
