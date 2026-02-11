@@ -11,7 +11,6 @@ import {
   CONFIG_PAYLOAD,
   HANDSHAKE_ACK,
   HANDSHAKE_MAGIC,
-  HANDSHAKE_TIMEOUT_CONSERVATIVE_MS,
   HANDSHAKE_TIMEOUT_MS,
   LOGO_MODE_CMD,
   PREWRITE_MAX_ATTEMPTS,
@@ -23,7 +22,7 @@ import {
 import { calcWriteAddr, chunkImageData } from "./chunking";
 import { buildFrame, bytesToHex, parseResponse } from "./frame";
 import { sleep } from "./utils";
-import type { AddressMode, HandshakeDelayProfile, UploadOptions } from "./types";
+import type { AddressMode, UploadOptions } from "./types";
 import { WebSerialPort } from "../serial/webSerialPort";
 
 /** Returned debug artifacts useful for parity checks and simulation mode output. */
@@ -33,9 +32,8 @@ export interface UploadDebugArtifacts {
   frameCount: number;
 }
 
-/** Concrete timing values derived from requested handshake profile. */
+/** Concrete timing values used by handshake/open retry flow. */
 interface HandshakeTiming {
-  profile: HandshakeDelayProfile;
   handshakeTimeoutMs: number;
   drainWindowMs: number;
   prewriteRetryDelayMs: number;
@@ -113,18 +111,10 @@ export class LogoUploader {
     throw new Error(`Read timeout${collected.length > 0 ? ` (rx=${bytesToHex(collected)})` : ""}`);
   }
 
-  /** Maps handshake profile to concrete timeout/drain/retry values. */
-  private getHandshakeTiming(profile: HandshakeDelayProfile): HandshakeTiming {
-    if (profile === "conservative") {
-      return {
-        profile,
-        handshakeTimeoutMs: HANDSHAKE_TIMEOUT_CONSERVATIVE_MS,
-        drainWindowMs: 900,
-        prewriteRetryDelayMs: 350
-      };
-    }
+  /** Returns handshake/open timing values used for all upload sessions. */
+  private getHandshakeTiming(): HandshakeTiming {
     return {
-      profile,
+      // Keep existing default behavior that has proven stable.
       handshakeTimeoutMs: HANDSHAKE_TIMEOUT_MS,
       drainWindowMs: 400,
       prewriteRetryDelayMs: PREWRITE_RETRY_DELAY_MS
@@ -395,53 +385,23 @@ export class LogoUploader {
   }
 
   /** Advisory probe used by UI connect step to estimate protocol compatibility. */
-  async probeIdentity(profile: HandshakeDelayProfile, log?: UploadOptions["log"]): Promise<boolean> {
-    const profiles: HandshakeDelayProfile[] = profile === "conservative" ? ["conservative"] : ["normal", "conservative"];
-    for (const candidate of profiles) {
-      const timing = this.getHandshakeTiming(candidate);
-      try {
-        await this.open(BAUD_RATE, timing.drainWindowMs);
-        await this.handshake(1, timing.handshakeTimeoutMs, log);
-        if (candidate !== profile) {
-          log?.(`Identity probe recovered with ${candidate} timing profile`);
-        }
-        return true;
-      } catch (error) {
-        log?.(`Identity probe failed (${candidate}): ${String(error)}`);
-      } finally {
-        await this.serial.close();
-      }
+  async probeIdentity(log?: UploadOptions["log"]): Promise<boolean> {
+    const timing = this.getHandshakeTiming();
+    try {
+      await this.open(BAUD_RATE, timing.drainWindowMs);
+      await this.handshake(1, timing.handshakeTimeoutMs, log);
+      return true;
+    } catch (error) {
+      log?.(`Identity probe failed: ${String(error)}`);
+      return false;
+    } finally {
+      await this.serial.close();
     }
-    return false;
   }
 
-  /** Full upload flow with profile fallback, data transfer, and guaranteed close(). */
+  /** Full upload flow: prewrite, data transfer, and guaranteed close(). */
   async upload(imageData: Uint8Array, options: UploadOptions): Promise<UploadDebugArtifacts> {
-    const requestedProfile = options.handshakeProfile ?? "normal";
-    const profiles: HandshakeDelayProfile[] = requestedProfile === "conservative" ? ["conservative"] : ["normal", "conservative"];
-    let prewriteError: unknown = new Error("Prewrite phase did not complete");
-    for (const candidate of profiles) {
-      const timing = this.getHandshakeTiming(candidate);
-      options.log?.(`Handshake delay profile: ${timing.profile}`);
-      try {
-        await this.runPrewritePhase(timing, options.log);
-        if (candidate !== requestedProfile) {
-          options.log?.(`Prewrite recovered with ${candidate} timing profile`);
-        }
-        prewriteError = null;
-        break;
-      } catch (error) {
-        prewriteError = error;
-        if (candidate === profiles[profiles.length - 1]) {
-          throw error;
-        }
-        // Retry once with more conservative timing before giving up.
-        options.log?.(`Falling back to conservative handshake timing after ${candidate} failure`);
-      }
-    }
-    if (prewriteError) {
-      throw prewriteError;
-    }
+    await this.runPrewritePhase(this.getHandshakeTiming(), options.log);
 
     try {
       const debug = await this.sendImageData(imageData, options.addressMode, options.progress, options.log);

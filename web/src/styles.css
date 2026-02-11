@@ -34,6 +34,7 @@ body {
 
 /* Main page layout container. */
 .app-shell {
+  width: min(1020px, 100%);
   max-width: 1020px;
   margin: 0 auto;
   padding: 22px 16px 40px;
@@ -61,7 +62,10 @@ h1 {
   font-size: clamp(1.65rem, 4vw, 2.4rem);
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
+  line-height: 1.15;
 }
 
 .title-icon {
@@ -80,6 +84,7 @@ h1 {
   display: inline-flex;
   align-items: stretch;
   overflow: hidden;
+  max-width: 100%;
   border-radius: 8px;
   border: 1px solid rgba(157, 175, 196, 0.38);
   box-shadow: 0 4px 18px rgba(2, 8, 17, 0.35);
@@ -118,6 +123,7 @@ h1 {
   display: inline-flex;
   align-items: stretch;
   overflow: hidden;
+  max-width: 100%;
   border-radius: 8px;
   border: 1px solid rgba(157, 175, 196, 0.38);
   box-shadow: 0 4px 18px rgba(2, 8, 17, 0.35);
@@ -141,6 +147,8 @@ h1 {
   color: #eff9ff;
   background: linear-gradient(180deg, #4080d9 0%, #3367b8 100%);
   border-left: 1px solid rgba(15, 28, 45, 0.35);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .info-badge:hover {
@@ -149,6 +157,7 @@ h1 {
 
 /* Reusable panel shell for each wizard-like step. */
 .panel {
+  min-width: 0;
   border: 1px solid var(--border);
   background: var(--panel);
   border-radius: var(--radius);
@@ -165,7 +174,7 @@ h1 {
 /* Two-column desktop layout collapsing to one column on small screens. */
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -259,6 +268,9 @@ button:disabled {
 .log-box {
   max-height: 260px;
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   background: var(--panel-strong);
   color: #c1ebde;
   border-radius: 10px;
@@ -309,5 +321,27 @@ progress::-moz-progress-bar {
 
   .hero-badges {
     justify-content: flex-start;
+  }
+
+  h1 {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-shell {
+    padding: 12px 10px 28px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .flash-counter-badge-label,
+  .flash-counter-badge-value,
+  .info-badge-label,
+  .info-badge-value {
+    padding: 4px 8px;
+    font-size: 0.86rem;
   }
 }

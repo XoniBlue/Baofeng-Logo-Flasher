@@ -41,10 +41,8 @@ export const SETUP_PAYLOAD = new Uint8Array([0x00, 0x00, 0x0c, 0x00]);
 export const PREWRITE_MAX_ATTEMPTS = 2;
 /** Delay between prewrite attempts for transient serial timing issues. */
 export const PREWRITE_RETRY_DELAY_MS = 200;
-/** Default handshake timeout used by "normal" profile. */
+/** Handshake timeout for the prewrite phase. */
 export const HANDSHAKE_TIMEOUT_MS = 4000;
-/** Extended handshake timeout used by "conservative" profile. */
-export const HANDSHAKE_TIMEOUT_CONSERVATIVE_MS = 7000;
 /** Timeout for framed ACKs during prewrite exchange. */
 export const PREWRITE_FRAME_TIMEOUT_MS = 3500;
 
