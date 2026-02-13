@@ -45,6 +45,9 @@ out/previews/
 .streamlit/
 .run/streamlit.pid
 
+# Reverse engineering artifacts
+ilspy/
+
 # Large local firmware/image artifacts
 Baofeng_5RM_MASTER.img
 
