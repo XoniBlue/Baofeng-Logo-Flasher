@@ -16,6 +16,7 @@ import { StatusLog } from "./ui/components/StatusLog";
 import { fetchGlobalFlashCount, recordSuccessfulFlashOnce } from "./ui/flashCounter";
 import { reportClientError } from "./ui/clientLogReporter";
 import walkieTalkieIcon from "../walkie-talkie.svg";
+import packageJson from "../package.json";
 
 /** Builds contiguous frame stream used by simulation mode and debug parity checks. */
 function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array {
@@ -36,6 +37,7 @@ function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array 
 
 /** Top-level flasher UI and orchestration logic for image prep and upload actions. */
 export default function App(): JSX.Element {
+  const appSemver = packageJson.version;
   const webSerialSupported = isWebSerialSupported();
   const defaultModel = SERIAL_FLASH_CONFIGS[0];
   const loadedModel = loadModel(defaultModel.model);
@@ -267,6 +269,10 @@ export default function App(): JSX.Element {
           <div className="flash-counter-badge" role="status" aria-live="polite">
             <span className="flash-counter-badge-label">Total flashes</span>
             <span className="flash-counter-badge-value">{totalFlashes ?? "..."}</span>
+          </div>
+          <div className="info-badge" role="status" aria-label={`Version ${appSemver}`}>
+            <span className="info-badge-label">Version</span>
+            <span className="info-badge-value">v{appSemver}</span>
           </div>
           <a className="info-badge" href="https://github.com/XoniBlue/Baofeng-Logo-Flasher" target="_blank" rel="noreferrer">
             <span className="info-badge-label">Repo</span>
