@@ -41,6 +41,8 @@ jobs:
         env:
           VITE_APP_VERSION: ${{ github.sha }}
           VITE_LOG_INGEST_URL: ${{ vars.VITE_LOG_INGEST_URL }}
+          VITE_TELEMETRY_UNIFIED: ${{ vars.VITE_TELEMETRY_UNIFIED }}
+          VITE_TELEMETRY_BASE_URL: ${{ vars.VITE_TELEMETRY_BASE_URL }}
         run: npm run build
 
       - name: Configure Pages

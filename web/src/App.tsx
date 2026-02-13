@@ -224,7 +224,13 @@ export default function App(): JSX.Element {
       });
 
       // Counter update is fire-and-forget so UI success is not blocked by network.
-      void recordSuccessfulFlashOnce(flashSessionId).then((updatedCount) => {
+      void recordSuccessfulFlashOnce({
+        sessionId: flashSessionId,
+        model: selectedModel.model,
+        writeMode,
+        connected,
+        logLines: flashLogs
+      }).then((updatedCount) => {
         if (updatedCount !== null) {
           setTotalFlashes(updatedCount);
         }

@@ -116,6 +116,19 @@ Preview built output locally:
 npm --prefix web run preview
 ```
 
+### Root command shortcuts (Makefile)
+
+From repository root, you can run the common workflow without changing directories:
+
+```bash
+make dev            # web + worker local dev
+make preflight      # web test + web build + worker typecheck
+make errors LIMIT=20 ADMIN_TOKEN=...   # recent errors
+make success        # unified successful flash count
+make cf-migrate     # apply telemetry migration remotely
+make cf-deploy      # deploy Cloudflare worker
+```
+
 ---
 
 ## 7) GitHub Pages deployment
@@ -160,6 +173,7 @@ npm ci
 wrangler d1 create baofeng_logs
 # paste returned database_id into wrangler.toml
 wrangler d1 execute baofeng_logs --file ./schema.sql --remote
+wrangler d1 execute baofeng_logs --file ./migrations/001_telemetry_events.sql --remote
 wrangler secret put ADMIN_TOKEN
 npm run deploy
 ```
@@ -167,6 +181,8 @@ npm run deploy
    - `https://<worker-subdomain>.workers.dev/client-log`
 3. In GitHub repo settings, add **Repository variable**:
    - `VITE_LOG_INGEST_URL` = Worker ingest URL.
+   - `VITE_TELEMETRY_BASE_URL` = Log Worker base URL (for unified `/event` and `/metrics` endpoints).
+   - `VITE_TELEMETRY_UNIFIED` = `1` to enable unified event writes.
 4. Push to `web-dev` so Pages rebuilds with that env var.
 
 ### Local development
@@ -175,6 +191,8 @@ Create `web/.env.local`:
 ```bash
 VITE_APP_VERSION=dev-local
 VITE_LOG_INGEST_URL=https://<worker-subdomain>.workers.dev/client-log
+VITE_TELEMETRY_BASE_URL=https://<worker-subdomain>.workers.dev
+VITE_TELEMETRY_UNIFIED=1
 ```
 
 ### Reading logs

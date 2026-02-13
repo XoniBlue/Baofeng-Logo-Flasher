@@ -10,8 +10,10 @@ Data collection policy:
 ## Endpoints
 
 - `POST /client-log`: ingest client error logs from the web app.
+- `POST /event`: unified telemetry ingest (`flash_success` + error events).
 - `GET /health`: basic health check.
 - `GET /recent?limit=50`: returns recent logs (requires `Authorization: Bearer <ADMIN_TOKEN>`).
+- `GET /metrics/flash-count`: returns total `flash_success` event count.
 
 ## Local setup
 
@@ -34,6 +36,7 @@ wrangler d1 create baofeng_logs
 
 ```bash
 wrangler d1 execute baofeng_logs --file ./schema.sql --remote
+wrangler d1 execute baofeng_logs --file ./migrations/001_telemetry_events.sql --remote
 ```
 
 4. Configure Worker secrets:

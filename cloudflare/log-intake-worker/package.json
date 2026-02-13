@@ -7,6 +7,8 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "d1:migrate": "wrangler d1 execute baofeng_logs --file ./schema.sql",
+    "d1:migrate:v1": "wrangler d1 execute baofeng_logs --file ./migrations/001_telemetry_events.sql",
+    "d1:migrate:v1:remote": "wrangler d1 execute baofeng_logs --remote --file ./migrations/001_telemetry_events.sql",
     "recent": "node ./scripts/recent.mjs",
     "retention:30d": "wrangler d1 execute baofeng_logs --remote --file ./queries/delete_older_than_30_days.sql"
   },

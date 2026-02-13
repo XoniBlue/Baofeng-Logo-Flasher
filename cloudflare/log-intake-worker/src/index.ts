@@ -4,6 +4,14 @@ interface Env {
   ADMIN_TOKEN?: string;
 }
 
+type UnifiedEventType =
+  | "flash_success"
+  | "flash_error"
+  | "connect_error"
+  | "window_error"
+  | "unhandled_rejection"
+  | "client_error";
+
 interface ClientLogInsertPayload {
   event_type: string;
   occurred_at: string;
@@ -21,11 +29,35 @@ interface ClientLogInsertPayload {
   ip_hash: string | null;
 }
 
+interface UnifiedTelemetryInsertPayload {
+  event_type: UnifiedEventType;
+  occurred_at: string;
+  message: string;
+  session_id: string | null;
+  error_name: string | null;
+  stack: string | null;
+  model: string;
+  write_mode: number;
+  connected: number;
+  app_version: string;
+  log_lines_json: string;
+  metadata_json: string;
+}
+
 const MAX_BODY_CHARS = 40_000;
 const MAX_LINE_CHARS = 240;
 const MAX_STACK_CHARS = 1_200;
 const MAX_MESSAGE_CHARS = 300;
 const MAX_LOG_LINES = 80;
+const MAX_SESSION_ID_CHARS = 120;
+const ALLOWED_UNIFIED_EVENTS = new Set<UnifiedEventType>([
+  "flash_success",
+  "flash_error",
+  "connect_error",
+  "window_error",
+  "unhandled_rejection",
+  "client_error"
+]);
 
 function jsonResponse(status: number, body: unknown, extraHeaders?: HeadersInit): Response {
   return new Response(JSON.stringify(body), {
@@ -72,7 +104,7 @@ function trimTo(value: string, maxChars: number): string {
   if (value.length <= maxChars) {
     return value;
   }
-  return `${value.slice(0, maxChars - 1)}…`;
+  return `${value.slice(0, maxChars - 1)}...`;
 }
 
 function asNullableString(value: unknown, maxChars: number): string | null {
@@ -104,24 +136,53 @@ function isIsoDateString(value: string): boolean {
   return Number.isFinite(parsed);
 }
 
-function parsePayload(input: unknown): ClientLogInsertPayload | null {
+function sanitizeLogLinesJson(value: unknown): string {
+  if (typeof value !== "string") {
+    return "[]";
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return "[]";
+    }
+    const lines = parsed.slice(-MAX_LOG_LINES).map((line) => trimTo(String(line), MAX_LINE_CHARS));
+    return JSON.stringify(lines);
+  } catch {
+    return "[]";
+  }
+}
+
+function sanitizeMetadataJson(value: unknown): string {
+  if (typeof value !== "string") {
+    return "{}";
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return "{}";
+    }
+    const serialized = JSON.stringify(parsed);
+    if (serialized.length > MAX_BODY_CHARS) {
+      return "{}";
+    }
+    return serialized;
+  } catch {
+    return "{}";
+  }
+}
+
+function parseLegacyPayload(input: unknown): ClientLogInsertPayload | null {
   if (typeof input !== "object" || input === null) {
     return null;
   }
   const p = input as Record<string, unknown>;
 
-  // Required fields only. Unknown/extra fields are intentionally ignored.
   if (typeof p.event_type !== "string" || typeof p.message !== "string" || typeof p.occurred_at !== "string") {
     return null;
   }
   if (!isIsoDateString(p.occurred_at)) {
     return null;
   }
-
-  const parsedLogLinesJson =
-    typeof p.log_lines_json === "string"
-      ? trimTo(p.log_lines_json, MAX_BODY_CHARS)
-      : JSON.stringify([]);
 
   return {
     event_type: trimTo(p.event_type, 40),
@@ -135,31 +196,75 @@ function parsePayload(input: unknown): ClientLogInsertPayload | null {
     app_version: asOptionalStringOrDefault(p.app_version, 64, "unknown"),
     user_agent: "",
     page_url: "",
-    log_lines_json: parsedLogLinesJson,
+    log_lines_json: sanitizeLogLinesJson(p.log_lines_json),
     origin: null,
     ip_hash: null
   };
 }
 
-async function handleIngest(request: Request, env: Env): Promise<Response> {
+function parseUnifiedPayload(input: unknown): UnifiedTelemetryInsertPayload | null {
+  if (typeof input !== "object" || input === null) {
+    return null;
+  }
+  const p = input as Record<string, unknown>;
+
+  if (typeof p.event_type !== "string" || typeof p.message !== "string" || typeof p.occurred_at !== "string") {
+    return null;
+  }
+  if (!ALLOWED_UNIFIED_EVENTS.has(p.event_type as UnifiedEventType)) {
+    return null;
+  }
+  if (!isIsoDateString(p.occurred_at)) {
+    return null;
+  }
+
+  const sessionId = asNullableString(p.session_id, MAX_SESSION_ID_CHARS);
+  if (p.event_type === "flash_success" && !sessionId) {
+    return null;
+  }
+
+  return {
+    event_type: p.event_type as UnifiedEventType,
+    occurred_at: trimTo(p.occurred_at, 64),
+    message: trimTo(p.message, MAX_MESSAGE_CHARS),
+    session_id: sessionId,
+    error_name: asNullableString(p.error_name, 120),
+    stack: asNullableString(p.stack, MAX_STACK_CHARS),
+    model: asOptionalStringOrDefault(p.model, 64, "unknown"),
+    write_mode: asNumber01(p.write_mode, 0),
+    connected: asNumber01(p.connected, 0),
+    app_version: asOptionalStringOrDefault(p.app_version, 64, "unknown"),
+    log_lines_json: sanitizeLogLinesJson(p.log_lines_json),
+    metadata_json: sanitizeMetadataJson(p.metadata_json)
+  };
+}
+
+async function parseRequestJson(request: Request): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
+  const bodyText = await request.text();
+  if (bodyText.length > MAX_BODY_CHARS) {
+    return { ok: false, response: jsonResponse(413, { ok: false, error: "Payload too large" }) };
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(bodyText) };
+  } catch {
+    return { ok: false, response: jsonResponse(400, { ok: false, error: "Invalid JSON" }) };
+  }
+}
+
+async function handleLegacyIngest(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const allowedOrigin = resolveCorsOrigin(origin, env);
   if (origin && !allowedOrigin) {
     return jsonResponse(403, { ok: false, error: "Origin not allowed" });
   }
 
-  const bodyText = await request.text();
-  if (bodyText.length > MAX_BODY_CHARS) {
-    return jsonResponse(413, { ok: false, error: "Payload too large" }, corsHeaders(allowedOrigin));
+  const parsed = await parseRequestJson(request);
+  if (!parsed.ok) {
+    return jsonResponse(parsed.response.status, await parsed.response.json(), corsHeaders(allowedOrigin));
   }
 
-  let parsedJson: unknown;
-  try {
-    parsedJson = JSON.parse(bodyText);
-  } catch {
-    return jsonResponse(400, { ok: false, error: "Invalid JSON" }, corsHeaders(allowedOrigin));
-  }
-  const payload = parsePayload(parsedJson);
+  const payload = parseLegacyPayload(parsed.value);
   if (!payload) {
     return jsonResponse(400, { ok: false, error: "Invalid payload fields" }, corsHeaders(allowedOrigin));
   }
@@ -212,6 +317,82 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
   return jsonResponse(200, { ok: true }, corsHeaders(allowedOrigin));
 }
 
+async function handleUnifiedIngest(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const allowedOrigin = resolveCorsOrigin(origin, env);
+  if (origin && !allowedOrigin) {
+    return jsonResponse(403, { ok: false, error: "Origin not allowed" });
+  }
+
+  const parsed = await parseRequestJson(request);
+  if (!parsed.ok) {
+    return jsonResponse(parsed.response.status, await parsed.response.json(), corsHeaders(allowedOrigin));
+  }
+
+  const payload = parseUnifiedPayload(parsed.value);
+  if (!payload) {
+    return jsonResponse(400, { ok: false, error: "Invalid payload fields" }, corsHeaders(allowedOrigin));
+  }
+
+  const nowMs = Date.now();
+  const rowId = crypto.randomUUID();
+  const result = await env.LOG_DB.prepare(
+    `
+      INSERT OR IGNORE INTO telemetry_events (
+        id,
+        received_at_ms,
+        occurred_at,
+        event_type,
+        session_id,
+        message,
+        error_name,
+        stack,
+        model,
+        write_mode,
+        connected,
+        app_version,
+        log_lines_json,
+        metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  )
+    .bind(
+      rowId,
+      nowMs,
+      payload.occurred_at,
+      payload.event_type,
+      payload.session_id,
+      payload.message,
+      payload.error_name,
+      payload.stack,
+      payload.model,
+      payload.write_mode,
+      payload.connected,
+      payload.app_version,
+      payload.log_lines_json,
+      payload.metadata_json
+    )
+    .run();
+
+  const changed = Number(result.meta?.changes ?? 0) > 0;
+  return jsonResponse(200, { ok: true, deduped: !changed }, corsHeaders(allowedOrigin));
+}
+
+function safeParseLogLines(value: unknown): string[] {
+  if (typeof value !== "string") {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((line) => String(line));
+  } catch {
+    return [];
+  }
+}
+
 async function handleRecent(request: Request, env: Env): Promise<Response> {
   if (!env.ADMIN_TOKEN?.trim()) {
     return jsonResponse(503, { ok: false, error: "ADMIN_TOKEN is not configured" });
@@ -261,10 +442,44 @@ async function handleRecent(request: Request, env: Env): Promise<Response> {
     connected: row.connected === 1,
     appVersion: row.app_version,
     pageUrl: row.page_url,
-    logLines: typeof row.log_lines_json === "string" ? (JSON.parse(row.log_lines_json) as string[]) : []
+    logLines: safeParseLogLines(row.log_lines_json)
   }));
 
   return jsonResponse(200, { ok: true, count: rows.length, rows });
+}
+
+async function handleFlashCount(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  const allowedOrigin = resolveCorsOrigin(origin, env);
+  if (origin && !allowedOrigin) {
+    return jsonResponse(403, { ok: false, error: "Origin not allowed" });
+  }
+
+  const result = await env.LOG_DB.prepare(
+    `
+      SELECT COUNT(*) AS total
+      FROM telemetry_events
+      WHERE event_type = 'flash_success'
+        AND (session_id IS NULL OR session_id NOT LIKE 'baseline-%')
+    `
+  ).all<Record<string, unknown>>();
+
+  const baselineResult = await env.LOG_DB.prepare(
+    `
+      SELECT
+        COALESCE(MAX(CAST(json_extract(metadata_json, '$.baseline_total') AS INTEGER)), 0) AS baseline_total
+      FROM telemetry_events
+      WHERE event_type = 'flash_success'
+        AND session_id LIKE 'baseline-%'
+    `
+  ).all<Record<string, unknown>>();
+
+  const row = result.results?.[0];
+  const baselineRow = baselineResult.results?.[0];
+  const liveTotal = Math.max(0, Math.floor(Number(row?.total ?? 0)));
+  const baselineTotal = Math.max(0, Math.floor(Number(baselineRow?.baseline_total ?? 0)));
+  const total = liveTotal + baselineTotal;
+  return jsonResponse(200, { ok: true, total }, corsHeaders(allowedOrigin));
 }
 
 export default {
@@ -281,7 +496,13 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/client-log") {
-      return handleIngest(request, env);
+      return handleLegacyIngest(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/event") {
+      return handleUnifiedIngest(request, env);
+    }
+    if (request.method === "GET" && url.pathname === "/metrics/flash-count") {
+      return handleFlashCount(request, env);
     }
     if (request.method === "GET" && url.pathname === "/recent") {
       return handleRecent(request, env);
