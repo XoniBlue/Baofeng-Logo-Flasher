@@ -12,7 +12,7 @@ Declared in:
 
 ```bash
 git clone <repo-url>
-cd Baofeng_Logo_Flasher
+cd Baofeng_Logo_Flasher/main
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[ui]"
@@ -22,7 +22,7 @@ pip install -e ".[ui]"
 
 ```powershell
 git clone <repo-url>
-cd Baofeng_Logo_Flasher
+cd Baofeng_Logo_Flasher/main
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[ui]"

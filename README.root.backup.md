@@ -36,17 +36,22 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 | Step | Action |
 |---|---|
 | 1 | `git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git` |
-| 2 | `cd Baofeng-Logo-Flasher` |
+| 2 | `cd Baofeng_Logo_Flasher` |
 | 3 | `make install` |
 | 4 | `make start` |
 | 5 | Open `http://localhost:8501` |
 
 ```bash
 git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
-cd Baofeng-Logo-Flasher
+cd Baofeng_Logo_Flasher
 make install
 make start
 ```
+
+Branch-folder layout used locally:
+- `Baofeng_Logo_Flasher` -> `main` branch
+- `Baofeng_Logo_Flasher/dev` -> `dev` branch
+- `Baofeng_Logo_Flasher/web-dev` -> `web-dev` branch
 
 ---
 
@@ -117,7 +122,7 @@ If you do not have `make` available, use the manual install path below.
 
 ```bash
 git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
-cd Baofeng-Logo-Flasher
+cd Baofeng_Logo_Flasher
 make install
 ```
 
@@ -134,7 +139,7 @@ make install
 
 ```bash
 git clone https://github.com/XoniBlue/Baofeng-Logo-Flasher.git
-cd Baofeng-Logo-Flasher
+cd Baofeng_Logo_Flasher
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[ui]"

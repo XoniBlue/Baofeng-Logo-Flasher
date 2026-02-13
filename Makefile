@@ -7,6 +7,8 @@ PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 STREAMLIT := $(VENV)/bin/streamlit
 APP := src/baofeng_logo_flasher/streamlit_ui.py
+STREAMLIT_FLAGS := --logger.level=error --browser.gatherUsageStats=false
+STREAMLIT_START_FLAGS := --server.fileWatcherType=none
 RUN_DIR := .run
 PID_FILE := $(RUN_DIR)/streamlit.pid
 LOG_FILE := $(RUN_DIR)/streamlit.log
@@ -49,7 +51,7 @@ start: ensure-venv
 		exit 0; \
 	fi
 	@rm -f $(PID_FILE)
-	@nohup env PYTHONPATH=src $(STREAMLIT) run $(APP) --logger.level=error > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE)
+	@nohup env PYTHONPATH=src $(STREAMLIT) run $(APP) $(STREAMLIT_FLAGS) $(STREAMLIT_START_FLAGS) > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE)
 	@sleep 2
 	@if kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
 		printf "$(GREEN)✓ Streamlit started$(RESET) (PID $$(cat $(PID_FILE))).\n"; \
@@ -98,7 +100,7 @@ status:
 
 serve: ensure-venv
 	@printf "$(BLUE)🚀 Running Streamlit in foreground$(RESET) (Ctrl+C to stop).\n"
-	@env PYTHONPATH=src $(STREAMLIT) run $(APP)
+	@env PYTHONPATH=src $(STREAMLIT) run $(APP) $(STREAMLIT_FLAGS)
 
 test: ensure-venv
 	@printf "$(BLUE)🧪 Running tests...$(RESET)\n"

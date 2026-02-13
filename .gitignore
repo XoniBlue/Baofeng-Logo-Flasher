@@ -52,3 +52,12 @@ ilspy/
 Baofeng_5RM_MASTER.img
 
 streamlit.pid
+main copy/
+BaoFeng Firmware Tools/
+
+# Local copy/backup folders and files
+* copy/
+* Copy/
+*.backup
+*.backup.*
+*.bak
