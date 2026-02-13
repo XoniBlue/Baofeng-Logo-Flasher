@@ -74,6 +74,7 @@ BOOT_IMAGE_MAX_UPLOAD_MB = 10
 BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
 AUTO_PROBE_PORT_LIMIT = 3
 AUTO_PROBE_TIMEOUT_SEC = 1.5
+CONNECTION_PROBE_TIMEOUT_SEC = 0.7
 
 # Explicit medium-confidence criteria:
 # 1) Known USB-UART bridge VID (CP210x/CH34x/PL2303/FTDI), or
@@ -683,6 +684,7 @@ def _auto_select_port(
     model: str,
     config: dict,
     ports: list[str],
+    perform_handshake: bool = False,
 ) -> tuple[Optional[str], str]:
     """
     Auto-select a likely port using bounded probing and explicit fallback rules.
@@ -698,23 +700,28 @@ def _auto_select_port(
     metadata = _list_port_metadata()
     ranked_ports = _rank_ports_for_autoselect(ports, metadata)
 
+    # Fast-path: a single detected port is usually the best default selection.
+    if len(ports) == 1:
+        return ports[0], f"Auto-selected only detected port ({ports[0]})."
+
     probed = ranked_ports[: min(AUTO_PROBE_PORT_LIMIT, len(ranked_ports))]
     handshake_hits = []
     handshake_failed = set()
 
-    for dev in probed:
-        probe = _probe_radio_identity(dev, model, config, timeout_cap=AUTO_PROBE_TIMEOUT_SEC)
-        if probe.get("ok"):
-            handshake_hits.append(dev)
-        else:
-            handshake_failed.add(dev)
-            logger.info("Auto-probe handshake failed on %s: %s", dev, probe.get("error", "unknown"))
+    if perform_handshake:
+        for dev in probed:
+            probe = _probe_radio_identity(dev, model, config, timeout_cap=AUTO_PROBE_TIMEOUT_SEC)
+            if probe.get("ok"):
+                handshake_hits.append(dev)
+            else:
+                handshake_failed.add(dev)
+                logger.info("Auto-probe handshake failed on %s: %s", dev, probe.get("error", "unknown"))
 
-    if len(handshake_hits) == 1:
-        return handshake_hits[0], f"Auto-selected by successful handshake on {handshake_hits[0]}."
+        if len(handshake_hits) == 1:
+            return handshake_hits[0], f"Auto-selected by successful handshake on {handshake_hits[0]}."
 
-    if len(handshake_hits) > 1:
-        return None, "Multiple radios responded; select port manually."
+        if len(handshake_hits) > 1:
+            return None, "Multiple radios responded; select port manually."
 
     medium_ranked = []
     for dev in ranked_ports:
@@ -734,7 +741,9 @@ def _auto_select_port(
         dev, score = medium_ranked[0]
         return dev, f"Auto-selected strongest medium-confidence port ({dev}, score={score})."
 
-    return None, f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached. No unique high-confidence candidate."
+    if perform_handshake:
+        return None, f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached. No unique high-confidence candidate."
+    return None, "No unique medium-confidence candidate. Select port manually."
 
 
 def _probe_connection_status(port: str, model: str, config: dict, force: bool = False) -> dict:
@@ -746,7 +755,7 @@ def _probe_connection_status(port: str, model: str, config: dict, force: bool = 
     if not force and same_target and fresh:
         return cache
 
-    probe = _probe_radio_identity(port, model, config, timeout_cap=1.5)
+    probe = _probe_radio_identity(port, model, config, timeout_cap=CONNECTION_PROBE_TIMEOUT_SEC)
     # Intentionally avoid strict model-string validation here. UV-5RM can
     # report UV-17-family IDs while still using the same A5 logo protocol.
     cache = {
@@ -961,11 +970,9 @@ def _render_connection_health(model: str, config: dict, port: str, ports: list[s
         desired_show_controls = not ready_now
         if st.session_state.connection_show_controls != desired_show_controls:
             st.session_state.connection_show_controls = desired_show_controls
-            st.rerun()
     elif bool(last_ready) != ready_now:
         st.session_state.connection_last_ready = ready_now
         st.session_state.connection_show_controls = not ready_now
-        st.rerun()
 
     return probe
 
@@ -1007,6 +1014,7 @@ def tab_boot_logo_flasher():
                 model=selected_model,
                 config=dict(SERIAL_FLASH_CONFIGS[selected_model]),
                 ports=ports,
+                perform_handshake=False,
             )
             st.session_state.connection_last_ports_snapshot = ports_snapshot
             st.session_state.connection_autoselect_reason = reason
@@ -1062,8 +1070,6 @@ def tab_boot_logo_flasher():
             st.session_state.connection_show_controls = False
         if not ready_now:
             st.session_state.connection_show_controls = True
-        if show_controls != st.session_state.connection_show_controls:
-            st.rerun()
 
     with top_right:
         step2_tip_rows = [
