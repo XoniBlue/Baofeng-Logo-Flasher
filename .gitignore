@@ -50,8 +50,6 @@ ilspy/
 
 # Large local firmware/image artifacts
 Baofeng_5RM_MASTER.img
-
-streamlit.pid
 main copy/
 BaoFeng Firmware Tools/
 
