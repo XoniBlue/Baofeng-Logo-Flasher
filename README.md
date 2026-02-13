@@ -7,7 +7,7 @@ Flash custom boot logos to your Baofeng radio directly from your browser—no in
 <p align="left">
   <a href="https://github.com/XoniBlue/Baofeng-Logo-Flasher/actions/workflows/ci.yml"><img alt="Web CI" src="https://github.com/XoniBlue/Baofeng-Logo-Flasher/actions/workflows/ci.yml/badge.svg?branch=web-dev"></a>
   <a href="https://github.com/XoniBlue/Baofeng-Logo-Flasher/actions/workflows/pages.yml"><img alt="Deploy Pages" src="https://github.com/XoniBlue/Baofeng-Logo-Flasher/actions/workflows/pages.yml/badge.svg?branch=web-dev"></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-v2.1.2-0A7B61">
+  <img alt="Version" src="https://img.shields.io/badge/version-v0.9.0-0A7B61">
   <a href="https://vitejs.dev/"><img alt="Vite" src="https://img.shields.io/badge/Built%20With-Vite-646CFF?logo=vite&logoColor=white"></a>
   <a href="https://react.dev/"><img alt="React" src="https://img.shields.io/badge/UI-React-149ECA?logo=react&logoColor=white"></a>
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/Language-TypeScript-3178C6?logo=typescript&logoColor=white"></a>
