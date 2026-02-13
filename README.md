@@ -14,6 +14,11 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 > **Recommended workflow:** use the local Streamlit web GUI.  
 > Run `make start`, then open `http://localhost:8501`.
 
+> [!IMPORTANT]
+> Firmware flashing (including the "dumper helper" firmware) can brick a UV-5RM.
+> If you lose UART bootloader responses, recovery typically requires **SWD**.
+> See `BRICK_RECOVERY_5RM.md`.
+
 ---
 
 ## Quick Navigation

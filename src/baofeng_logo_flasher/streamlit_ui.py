@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 import html
+import os
+import inspect
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -42,11 +44,30 @@ from baofeng_logo_flasher.boot_logo import (
     list_serial_ports,
     read_radio_id,
 )
+from baofeng_logo_flasher.firmware_tools import (
+    FW_FLASH_BASE,
+    FW_FLASH_LIMIT,
+    apply_unlock_frequency_patch,
+    analyze_firmware_vector_table,
+    flash_vendor_bf_serial,
+    flash_firmware_serial,
+    firmware_from_upload_bytes,
+    list_factory_firmware,
+    make_dumper_flash_equivalent,
+    monitor_dumper_serial,
+    parse_hex_byte_string,
+    patch_firmware_at_offset,
+    save_capture_segments,
+    suggest_manual_dumper_flash_steps,
+    unwrap_bf_bytes,
+    wrap_bf_bytes,
+)
 
 # Import from core module for unified safety and parsing
 from baofeng_logo_flasher.core.safety import (
     WritePermissionError,
     create_streamlit_safety_context,
+    require_write_permission,
 )
 from baofeng_logo_flasher.core.messages import (
     result_to_warnings,
@@ -66,6 +87,8 @@ from baofeng_logo_flasher.ui.components import (
     render_warning_list,
     render_status_error,
     init_write_mode_state,
+    render_mode_switch,
+    render_write_confirmation,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,12 +97,83 @@ BOOT_IMAGE_MAX_UPLOAD_MB = 10
 BOOT_IMAGE_MAX_UPLOAD_BYTES = BOOT_IMAGE_MAX_UPLOAD_MB * 1024 * 1024
 AUTO_PROBE_PORT_LIMIT = 3
 AUTO_PROBE_TIMEOUT_SEC = 1.5
+CONNECTION_PROBE_TIMEOUT_SEC = 0.7
 
 # Explicit medium-confidence criteria:
 # 1) Known USB-UART bridge VID (CP210x/CH34x/PL2303/FTDI), or
 # 2) Descriptor/manufacturer/product contains baofeng/serial/uart.
 KNOWN_BRIDGE_VIDS = {0x10C4, 0x1A86, 0x067B, 0x0403}
 MEDIUM_HINT_TOKENS = ("baofeng", "serial", "uart", "pl2303", "cp210", "ch340", "ftdi")
+
+EXPERT_MODE_ENV = "BAOFENG_EXPERT_MODE"
+EXPERT_UNLOCK_PHRASE = "I UNDERSTAND THIS MAY BRICK"
+
+
+def _is_expert_mode_unlocked(state_key: str) -> bool:
+    """
+    Expert mode gates high-risk features that are unvalidated/experimental.
+
+    Unlock options:
+    - Set env var BAOFENG_EXPERT_MODE=1, or
+    - Check the UI box and type the exact unlock phrase.
+    """
+    env_enabled = os.getenv(EXPERT_MODE_ENV, "").strip() in ("1", "true", "TRUE", "yes", "YES", "on", "ON")
+    if env_enabled:
+        st.session_state[state_key] = True
+        return True
+
+    if state_key not in st.session_state:
+        st.session_state[state_key] = False
+
+    with st.expander("Expert Unlock", expanded=False):
+        st.warning(
+            "K-plug firmware flashing is not validated against a known-good UV-5RM upgrade protocol capture. "
+            "Without SWD recovery hardware, a bad flash can permanently brick the radio."
+        )
+        st.caption(f"To unlock via environment variable: set `{EXPERT_MODE_ENV}=1` before starting Streamlit.")
+        ack = st.checkbox(
+            "Enable expert mode for this session",
+            value=bool(st.session_state[state_key]),
+            key=f"{state_key}_ack",
+        )
+        phrase = st.text_input(
+            f'Type exactly "{EXPERT_UNLOCK_PHRASE}" to unlock',
+            value="",
+            key=f"{state_key}_phrase",
+            help="Case-insensitive comparison is used.",
+        )
+        unlocked = bool(ack and phrase.strip().upper() == EXPERT_UNLOCK_PHRASE.upper())
+        st.session_state[state_key] = unlocked
+        if unlocked:
+            st.success("Expert mode unlocked for this session.")
+        else:
+            st.info("Expert mode is locked.")
+
+    return bool(st.session_state[state_key])
+
+
+def _enforce_streamlit_write_permission(
+    *,
+    model: str,
+    simulate: bool,
+    risk_acknowledged: bool,
+    target_region: str,
+    bytes_length: int,
+    offset: Optional[int] = None,
+) -> None:
+    """Unify Streamlit write gating with core safety rules (no UI rendering)."""
+    safety_ctx = create_streamlit_safety_context(
+        risk_acknowledged=bool(risk_acknowledged),
+        model=model,
+        region_known=True,
+        simulate=simulate,
+    )
+    require_write_permission(
+        safety_ctx,
+        target_region=target_region,
+        bytes_length=bytes_length,
+        offset=offset,
+    )
 
 
 def _init_session_state():
@@ -309,8 +403,11 @@ def main():
     )
 
     # Main tabs
-    tab1, tab2 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "⚡ Boot Logo Flasher",
+        "🧩 Firmware Extract/Rebuild",
+        "🚀 Firmware Flash",
+        "📥 Firmware Dump",
         "📋 Capabilities",
     ])
 
@@ -318,6 +415,15 @@ def main():
         tab_boot_logo_flasher()
 
     with tab2:
+        tab_firmware_extract_rebuild()
+
+    with tab3:
+        tab_firmware_flash()
+
+    with tab4:
+        tab_firmware_dump()
+
+    with tab5:
         tab_capabilities()
 
 def launch() -> None:
@@ -498,6 +604,595 @@ def tab_capabilities():
         model_rows.sort(key=lambda r: r["Model"])
         all_height = min(46 + (len(model_rows) * 35), 320)
         st.dataframe(model_rows, use_container_width=True, hide_index=True, height=all_height)
+
+
+# ============================================================================
+# TAB: FIRMWARE EXTRACT / REBUILD / FLASH / DUMP
+# ============================================================================
+
+def _render_serial_selector(prefix: str, *, default_baud: int = 9600) -> tuple[str, int, float]:
+    """Shared serial selector for firmware tabs."""
+    ports = list_serial_ports()
+    col1, col2, col3 = st.columns([2.5, 1, 1])
+    with col1:
+        if ports:
+            options = ports + ["[Enter manually]"]
+            selected = st.selectbox(
+                "Serial Port",
+                options,
+                index=0,
+                key=f"{prefix}_port_select",
+            )
+            if selected == "[Enter manually]":
+                port = st.text_input("Port Path", value="", key=f"{prefix}_port_manual")
+            else:
+                port = selected
+        else:
+            port = st.text_input("Port Path", value="", key=f"{prefix}_port_manual_no_detect")
+    with col2:
+        baud = st.selectbox(
+            "Baud",
+            [9600, 38400, 115200],
+            index=[9600, 38400, 115200].index(default_baud) if default_baud in {9600, 38400, 115200} else 0,
+            key=f"{prefix}_baud",
+        )
+    with col3:
+        timeout = st.number_input(
+            "Timeout (s)",
+            min_value=0.1,
+            max_value=10.0,
+            value=1.0,
+            step=0.1,
+            key=f"{prefix}_timeout",
+        )
+    return port.strip(), int(baud), float(timeout)
+
+
+def tab_firmware_extract_rebuild() -> None:
+    """Firmware wrapper and editor tools."""
+    st.warning(
+        "Firmware changes can brick radios. Use known-good backups and only flash in programming mode "
+        "(PTT + side button while powering on)."
+    )
+
+    _render_section_header("Firmware Extract / Rebuild")
+    st.caption("Ports C tools to Python: encrypt/decrypt + uv5rm-wrap-tool equivalent.")
+
+    if "fw_extracted_bin" not in st.session_state:
+        st.session_state.fw_extracted_bin = None
+    if "fw_extracted_data" not in st.session_state:
+        st.session_state.fw_extracted_data = None
+
+    with st.expander("Factory Firmware Browser", expanded=False):
+        factory_root = st.text_input(
+            "factory_firmware path",
+            value="factory_firmware",
+            help="Point to a local clone path if available.",
+        )
+        firmware_files = list_factory_firmware(factory_root)
+        if firmware_files:
+            st.write(f"Found {len(firmware_files)} firmware files:")
+            st.code("\n".join(str(p) for p in firmware_files[:80]), language="text")
+        else:
+            st.info("No local factory firmware directory found at that path.")
+
+    st.markdown("**Extract (.BF -> .bin)**")
+    bf_upload = st.file_uploader("Input wrapped firmware (.BF)", type=["bf", "BF"], key="fw_extract_bf")
+    col1, col2 = st.columns(2)
+    with col1:
+        decrypt_fw = st.checkbox("Decrypt firmware region", value=True, key="fw_extract_dec_fw")
+    with col2:
+        decrypt_data = st.checkbox("Decrypt data region (experimental)", value=False, key="fw_extract_dec_data")
+
+    if st.button("Extract Firmware", use_container_width=True, disabled=bf_upload is None):
+        try:
+            fw_bin, data_bin, header = unwrap_bf_bytes(
+                bf_upload.getvalue(),
+                decrypt_firmware=decrypt_fw,
+                decrypt_data=decrypt_data,
+            )
+            st.session_state.fw_extracted_bin = fw_bin
+            st.session_state.fw_extracted_data = data_bin
+            st.success(
+                f"Extracted BF: regions={header.region_count}, firmware={len(fw_bin):,} bytes, "
+                f"data={len(data_bin):,} bytes"
+            )
+        except Exception as exc:
+            st.error(f"Extract failed: {exc}")
+
+    fw_extracted = st.session_state.fw_extracted_bin
+    data_extracted = st.session_state.fw_extracted_data
+    if fw_extracted:
+        st.download_button(
+            "Download Extracted Firmware (.bin)",
+            data=fw_extracted,
+            file_name="firmware_extracted.bin",
+            mime="application/octet-stream",
+            use_container_width=True,
+        )
+    if data_extracted:
+        st.download_button(
+            "Download Extracted Data Region (.bin)",
+            data=data_extracted,
+            file_name="firmware_extracted.data.bin",
+            mime="application/octet-stream",
+            use_container_width=True,
+        )
+
+    st.markdown("**Offset Editor (decrypted firmware)**")
+    edit_base_upload = st.file_uploader(
+        "Optional base decrypted .bin (if no extracted firmware in session)",
+        type=["bin"],
+        key="fw_edit_base_bin",
+    )
+    edit_base = fw_extracted or (edit_base_upload.getvalue() if edit_base_upload else None)
+    if edit_base:
+        e1, e2, e3 = st.columns([1.4, 1.8, 1.2])
+        with e1:
+            offset_text = st.text_input("Offset (hex)", value="0xF255", key="fw_patch_offset")
+        with e2:
+            patch_hex = st.text_input("Patch bytes (hex)", value="01", key="fw_patch_bytes")
+        with e3:
+            do_unlock_patch = st.checkbox("Apply 0xF255 unlock patch", value=False, key="fw_unlock_patch")
+
+        if st.button("Apply Patch", use_container_width=True):
+            try:
+                patched = edit_base
+                if do_unlock_patch:
+                    patched = apply_unlock_frequency_patch(patched, value=0x01, offset=0xF255)
+                offset = int(offset_text, 16)
+                patch_blob = parse_hex_byte_string(patch_hex)
+                if patch_blob:
+                    patched = patch_firmware_at_offset(patched, offset, patch_blob)
+                st.session_state.fw_extracted_bin = patched
+                st.success(f"Patch applied at 0x{offset:X} ({len(patch_blob)} bytes)")
+            except Exception as exc:
+                st.error(f"Patch failed: {exc}")
+
+    st.markdown("**Rebuild (.bin -> .BF)**")
+    rebuild_fw_upload = st.file_uploader("Firmware .bin for rebuild", type=["bin"], key="fw_rebuild_fw")
+    rebuild_data_upload = st.file_uploader(
+        "Optional data region .bin (SYSTEM BOOTLOADER)",
+        type=["bin"],
+        key="fw_rebuild_data",
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        encrypt_fw = st.checkbox("Encrypt firmware for BF wrapper", value=True, key="fw_rebuild_enc_fw")
+    with c2:
+        encrypt_data = st.checkbox("Encrypt data region (experimental)", value=False, key="fw_rebuild_enc_data")
+
+    rebuild_fw = (
+        st.session_state.fw_extracted_bin
+        if st.session_state.fw_extracted_bin is not None
+        else (rebuild_fw_upload.getvalue() if rebuild_fw_upload else None)
+    )
+    rebuild_data = rebuild_data_upload.getvalue() if rebuild_data_upload else (
+        st.session_state.fw_extracted_data if st.session_state.fw_extracted_data else b""
+    )
+    if st.button("Rebuild Wrapped Firmware (.BF)", use_container_width=True, disabled=rebuild_fw is None):
+        try:
+            wrapped = wrap_bf_bytes(
+                rebuild_fw,
+                data=rebuild_data or b"",
+                encrypt_firmware=encrypt_fw,
+                encrypt_data=encrypt_data,
+            )
+            st.success(f"Rebuild complete: {len(wrapped):,} bytes")
+            st.download_button(
+                "Download Rebuilt Firmware (.BF)",
+                data=wrapped,
+                file_name="firmware_rebuilt.BF",
+                mime="application/octet-stream",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            st.error(f"Rebuild failed: {exc}")
+
+
+def tab_firmware_flash() -> None:
+    """Full firmware flashing tab."""
+    _render_section_header("Firmware Flash")
+    expert_unlocked = _is_expert_mode_unlocked("expert_fw_flash")
+    st.error(
+        "Full firmware flashing over K-plug is high risk. This app implements the vendor upgrade protocol "
+        "(from EXE decompilation), but mistakes or unexpected bootloader behavior can still brick radios."
+    )
+    st.caption(
+        "Note: this flow cannot read back MCU flash over K-plug to verify what is on-device. "
+        "Simulation can parse .BF headers and optionally probe the vendor handshake."
+    )
+    st.caption("Vendor handshake: PROGRAM + BFNORMAL + 0x55, ACK; UPDATE, ACK. Packets: 0xAA ... CRC16 ... 0xEF.")
+
+    port, baudrate, timeout = _render_serial_selector("fw_flash", default_baud=115200)
+
+    # Built-in firmware selector (bundled under firmware_tools/) + optional upload override.
+    bundled_candidates = []
+    for root in ("firmware_tools/factory_firmware", "firmware_tools/reverse_engineering"):
+        bundled_candidates.extend(list_factory_firmware(root))
+    bundled_candidates = sorted(set(bundled_candidates), key=lambda p: str(p).lower())
+
+    firmware_choice = st.selectbox(
+        "Bundled firmware (optional)",
+        options=["[Upload file instead]"] + [str(p) for p in bundled_candidates],
+        index=0,
+        key="fw_flash_choice",
+        help="Select a local .BF already present in this repo, or upload a .BF/.bin.",
+    )
+
+    upload = st.file_uploader(
+        "Firmware file (.BF or .bin)",
+        type=["bf", "BF", "bin"],
+        key="fw_flash_upload",
+        help="Used when 'Bundled firmware' is set to upload mode.",
+    )
+
+    using_bundled = firmware_choice != "[Upload file instead]"
+    wrapped_input = st.checkbox(
+        "Input is wrapped .BF",
+        value=True,
+        key="fw_flash_wrapped",
+        disabled=using_bundled,
+        help="Bundled firmware is always .BF. For uploads, disable this if you provide a raw .bin.",
+    )
+    wrap_bin_to_bf = st.checkbox(
+        "If input is .bin: wrap to .BF for vendor flashing",
+        value=True,
+        key="fw_flash_wrap_bin_to_bf",
+        disabled=bool(using_bundled or wrapped_input),
+        help="Vendor firmware flashing uses .BF packages. This wraps your .bin into a .BF using the repo's wrapper logic.",
+    )
+    decrypt_wrapped = st.checkbox("Decrypt wrapped firmware before flashing", value=True, key="fw_flash_decrypt")
+    retries = st.slider("Packet retries", min_value=1, max_value=7, value=5, key="fw_flash_vendor_retries")
+    simulate_only = st.checkbox("Simulation only (no writes)", value=True, key="fw_flash_simulate")
+    probe_handshake = st.checkbox(
+        "Probe vendor handshake during simulation (opens port, sends PROGRAM/UPDATE only)",
+        value=False,
+        key="fw_flash_probe_handshake",
+        disabled=not bool(simulate_only),
+    )
+    probe_packets = st.checkbox(
+        "Probe framed packets during simulation (cmd 66 + cmd 1, no firmware chunks)",
+        value=False,
+        key="fw_flash_probe_packets",
+        disabled=not bool(simulate_only),
+        help="Confirms the radio replies with valid 0xAA...0xEF framed packets after PROGRAM/UPDATE.",
+    )
+
+    if not expert_unlocked and not simulate_only:
+        st.warning("Expert mode is required to disable simulation for full firmware flashing.")
+        simulate_only = True
+
+    write_ready = True
+    if not simulate_only:
+        render_mode_switch()
+        write_ready = render_write_confirmation(operation_name="flash firmware", details=None)
+
+    can_start = bool(port and (using_bundled or upload) and (simulate_only or (expert_unlocked and write_ready)))
+    if st.button(
+        "Start Firmware Flash" if not simulate_only else "Run Firmware Flash Simulation",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_start,
+    ):
+        try:
+            # Always produce:
+            # - fw_for_analysis: decrypted firmware bytes for vector table sanity check
+            # - bf_to_send: wrapped BF bytes to transmit with vendor protocol
+            meta = {}
+            fw_for_analysis: bytes
+            bf_to_send: bytes
+
+            if using_bundled:
+                selected_path = Path(firmware_choice)
+                if not selected_path.exists():
+                    st.error(f"Selected firmware not found: {selected_path}")
+                    return
+                bf_blob = selected_path.read_bytes()
+                fw_for_analysis, _, _hdr = unwrap_bf_bytes(bf_blob, decrypt_firmware=decrypt_wrapped, decrypt_data=False)
+                bf_to_send = bf_blob
+                meta["selected_path"] = str(selected_path)
+                meta["source"] = "bf (bundled)"
+            else:
+                up_blob = upload.getvalue() if upload else None
+                if not up_blob:
+                    st.error("No upload provided.")
+                    return
+                if wrapped_input:
+                    fw_for_analysis, _, _hdr = unwrap_bf_bytes(
+                        up_blob, decrypt_firmware=decrypt_wrapped, decrypt_data=False
+                    )
+                    bf_to_send = up_blob
+                    meta["source"] = "bf (upload)"
+                else:
+                    fw_for_analysis = up_blob
+                    if not wrap_bin_to_bf:
+                        st.error("Vendor flashing requires .BF (enable wrapping or upload a .BF).")
+                        return
+                    bf_to_send = wrap_bf_bytes(fw_for_analysis, encrypt_firmware=True, encrypt_data=False)
+                    meta["source"] = "bin (wrapped to bf)"
+
+            if len(fw_for_analysis) > FW_FLASH_LIMIT:
+                st.error(
+                    f"Firmware length {len(fw_for_analysis):,} exceeds safe firmware area limit "
+                    f"({FW_FLASH_LIMIT:,} bytes at 0x{FW_FLASH_BASE:08X})."
+                )
+                return
+
+            vt = analyze_firmware_vector_table(fw_for_analysis, start_address=FW_FLASH_BASE, flash_limit=FW_FLASH_LIMIT)
+            with st.expander("Preflight: Vector Table Check (heuristic)", expanded=False):
+                st.json(vt)
+            if vt.get("plausible") != "yes" and not expert_unlocked:
+                st.error(
+                    "Blocked: firmware does not look like a Cortex-M image for the configured start address. "
+                    "Expert mode is required to override this check."
+                )
+                return
+
+            if not simulate_only and not expert_unlocked:
+                st.error("Blocked: expert mode is required for real firmware flashing.")
+                return
+
+            _enforce_streamlit_write_permission(
+                model=st.session_state.get("selected_model", "Unknown"),
+                simulate=bool(simulate_only),
+                risk_acknowledged=bool(write_ready),
+                target_region="Firmware flash (vendor BF protocol)",
+                bytes_length=len(fw_for_analysis),
+                offset=FW_FLASH_BASE,
+            )
+
+            logs: list[str] = []
+            progress = st.progress(0)
+            status = st.empty()
+
+            def _progress_cb(sent: int, total: int) -> None:
+                pct = int((sent / total) * 100) if total else 100
+                progress.progress(min(pct, 100))
+                status.text(f"{sent:,}/{total:,} bytes ({pct}%)")
+
+            def _log_cb(msg: str) -> None:
+                logs.append(msg)
+
+            _flash_kwargs = dict(
+                port=port,
+                bf_blob=bf_to_send,
+                baudrate=baudrate,
+                timeout=timeout,
+                retries=retries,
+                dry_run=bool(simulate_only),
+                probe_handshake=bool(simulate_only and probe_handshake),
+                probe_packets=bool(simulate_only and probe_packets),
+                progress_cb=_progress_cb,
+                log_cb=_log_cb,
+            )
+            result = flash_vendor_bf_serial(**_flash_kwargs)
+            progress.progress(100)
+            st.success(f"Firmware flash completed: {result}")
+            st.json(meta)
+            if logs:
+                with st.expander("Serial Log", expanded=False):
+                    st.code("\n".join(logs), language="text")
+        except Exception as exc:
+            st.error(f"Firmware flash failed: {exc}")
+
+
+def tab_firmware_dump() -> None:
+    """Bootloader dumper monitor and helper actions."""
+    _render_section_header("Firmware Dump")
+    st.warning(
+        "This is a 2-step workflow: (1) flash the dumper firmware onto the radio MCU, "
+        "then (2) monitor the dumper output over the K-plug serial cable. "
+        "Flashing firmware can brick radios."
+    )
+
+    st.markdown("**Step 1 · Flash Dumper Firmware (choose one method)**")
+    dumper_method = st.radio(
+        "Flash method",
+        options=["SWD (pyOCD)", "Serial (K-plug, experimental)"],
+        index=0,
+        horizontal=True,
+        key="fw_dumper_method",
+        help="SWD uses a hardware debug probe (no serial COM port needed). Serial uses the K-plug cable (requires a serial port).",
+    )
+
+    expert_dumper_unlocked = _is_expert_mode_unlocked("expert_dumper")
+    dumper_file = st.text_input(
+        "Dumper firmware path (.BF recommended)",
+        value="firmware_tools/reverse_engineering/bf-uv5rm-btldr-dumper-fw.BF",
+        key="fw_dumper_file_unified",
+        disabled=not expert_dumper_unlocked,
+        help="Editing this path is locked unless Expert Unlock is enabled.",
+    )
+
+    if dumper_method == "SWD (pyOCD)":
+        st.caption("SWD mode: you do not select a serial port. You select an SWD probe (optional UID) and a pyOCD target.")
+        d1, d2 = st.columns(2)
+        with d1:
+            target = st.text_input("pyOCD target", value="at32f421x8", key="fw_dumper_pyocd_target")
+        with d2:
+            probe = st.text_input("Probe UID (optional)", value="", key="fw_dumper_pyocd_probe")
+        dry_flash = st.checkbox("Dry-run pyOCD command", value=True, key="fw_dumper_pyocd_dry")
+
+        if st.button("Flash Dumper via pyOCD", use_container_width=True):
+            res = make_dumper_flash_equivalent(
+                dumper_file,
+                target=target,
+                probe=probe or None,
+                dry_run=dry_flash,
+            )
+            if res.ok:
+                st.success(res.message)
+            else:
+                st.error(res.message)
+                st.info("Manual fallback:\n- " + "\n- ".join(suggest_manual_dumper_flash_steps()))
+            if res.command:
+                st.code(" ".join(res.command), language="bash")
+    else:
+        st.caption(
+            "Serial mode: you must select the K-plug serial port. "
+            "If this fails, use SWD (recommended) to flash the dumper."
+        )
+        expert_serial_unlocked = expert_dumper_unlocked
+        allowed_dumper = "firmware_tools/reverse_engineering/bf-uv5rm-btldr-dumper-fw.BF"
+        if not expert_serial_unlocked and dumper_file.strip() != allowed_dumper:
+            st.error(f"Non-expert mode only allows the bundled dumper: {allowed_dumper}")
+
+        port, baudrate, timeout = _render_serial_selector("fw_dumper_serial_flash_unified", default_baud=115200)
+        simulate_only = st.checkbox("Simulation only (no writes)", value=True, key="fw_dumper_serial_simulate_unified")
+        probe_handshake = st.checkbox(
+            "Probe vendor handshake during simulation (opens port, sends PROGRAM/UPDATE only)",
+            value=False,
+            key="fw_dumper_serial_probe_handshake",
+            disabled=not bool(simulate_only),
+        )
+        probe_packets = st.checkbox(
+            "Probe framed packets during simulation (cmd 66 + cmd 1, no firmware chunks)",
+            value=False,
+            key="fw_dumper_serial_probe_packets",
+            disabled=not bool(simulate_only),
+        )
+        write_ready = True
+        if not simulate_only:
+            render_mode_switch()
+            write_ready = render_write_confirmation(operation_name="flash dumper firmware", details=None)
+
+        can_start = bool(port) and (expert_serial_unlocked or dumper_file.strip() == allowed_dumper) and (
+            simulate_only or write_ready
+        )
+
+        if st.button("Flash Dumper via Serial", use_container_width=True, disabled=not can_start):
+            try:
+                path = Path(dumper_file)
+                if not path.exists():
+                    st.error(f"Path not found: {path}")
+                    return
+                bf_blob = path.read_bytes()
+                fw_for_analysis, _, _hdr = unwrap_bf_bytes(bf_blob, decrypt_firmware=True, decrypt_data=False)
+                meta = {"source": "bf", "path": str(path)}
+
+                vt = analyze_firmware_vector_table(fw_for_analysis, start_address=FW_FLASH_BASE, flash_limit=FW_FLASH_LIMIT)
+                with st.expander("Preflight: Vector Table Check (heuristic)", expanded=False):
+                    st.json(vt)
+                if vt.get("plausible") != "yes" and not expert_serial_unlocked:
+                    st.error(
+                        "Blocked: dumper image does not look like a Cortex-M image for the configured start address. "
+                        "Expert mode is required to override this check."
+                    )
+                    return
+
+                _enforce_streamlit_write_permission(
+                    model=st.session_state.get("selected_model", "Unknown"),
+                    simulate=bool(simulate_only),
+                    risk_acknowledged=bool(write_ready),
+                    target_region="Dumper firmware flash (vendor BF protocol)",
+                    bytes_length=len(fw_for_analysis),
+                    offset=FW_FLASH_BASE,
+                )
+
+                logs: list[str] = []
+                progress = st.progress(0)
+                status = st.empty()
+
+                def _progress_cb(sent: int, total: int) -> None:
+                    pct = int((sent / total) * 100) if total else 100
+                    progress.progress(min(pct, 100))
+                    status.text(f"{sent:,}/{total:,} bytes ({pct}%)")
+
+                def _log_cb(msg: str) -> None:
+                    logs.append(msg)
+
+                res = flash_vendor_bf_serial(
+                    port=port,
+                    bf_blob=bf_blob,
+                    baudrate=baudrate,
+                    timeout=timeout,
+                    retries=5,
+                    dry_run=bool(simulate_only),
+                    probe_handshake=bool(simulate_only and probe_handshake),
+                    probe_packets=bool(simulate_only and probe_packets),
+                    progress_cb=_progress_cb,
+                    log_cb=_log_cb,
+                )
+                progress.progress(100)
+                st.success(f"Dumper flash completed: {res}")
+                st.json(meta)
+                if logs:
+                    with st.expander("Serial Log", expanded=False):
+                        st.code("\n".join(logs), language="text")
+            except Exception as exc:
+                st.error(f"Serial dumper flash failed: {exc}")
+
+    st.divider()
+    st.markdown("**Step 2 · Monitor Dumper Output (Serial)**")
+    st.caption(
+        "This step always requires selecting the K-plug serial port. "
+        "After the dumper is flashed, power-cycle the radio and connect the K-plug."
+    )
+    port, baudrate, timeout = _render_serial_selector("fw_dump", default_baud=115200)
+    max_seconds = st.slider("Max monitor seconds", min_value=5, max_value=120, value=45, key="fw_dump_secs")
+    dry_run = st.checkbox("Dry-run simulation", value=True, key="fw_dump_dry")
+    confirm = st.text_input('Type "DUMP" to enable capture', value="", key="fw_dump_confirm")
+
+    st.info(
+        "What the output sections mean:\n"
+        "- BOOTLOADER: first 4KB at 0x08000000 (the update/crypto bootloader)\n"
+        "- USER_SYSTEM_DATA: small device data near USD region (if present)\n"
+        "- SYS_BOOTLOADER: config storage at 0x1FFFE400 (up to 4KB)\n"
+        "These will be saved as separate `.bin` files."
+    )
+
+    can_dump = bool(port and (dry_run or confirm.strip().upper() == "DUMP"))
+    if st.button("Start Dumper Monitor", type="primary", use_container_width=True, disabled=not can_dump):
+        try:
+            if dry_run:
+                st.info(
+                    f"Dry-run: would monitor {port} at {baudrate} baud for {max_seconds}s, parse hex dump, "
+                    "and export BOOTLOADER/USER_SYSTEM_DATA/SYS_BOOTLOADER segments."
+                )
+                return
+
+            lines: list[str] = []
+
+            def _log(line: str) -> None:
+                lines.append(line)
+
+            with st.spinner("Monitoring dumper serial output..."):
+                capture = monitor_dumper_serial(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=timeout,
+                    max_seconds=float(max_seconds),
+                    log_cb=_log,
+                )
+
+            out_dir = Path("out") / "firmware_dumps" / datetime.now().strftime("%Y%m%d_%H%M%S")
+            saved = save_capture_segments(capture, out_dir)
+            st.success(f"Dump capture completed. Saved to {out_dir}")
+
+            rows = []
+            for name, segment in capture.segments.items():
+                rows.append(
+                    {
+                        "Section": name,
+                        "Start": f"0x{segment.start_address:08X}",
+                        "Bytes": len(segment.data),
+                        "Saved": str(saved.get(name, "")),
+                    }
+                )
+            if rows:
+                st.dataframe(rows, hide_index=True, use_container_width=True)
+            else:
+                st.warning("No dump sections were detected. Check baud rate (115200) and wiring, then retry.")
+
+            if lines:
+                with st.expander("Raw Monitor Output", expanded=False):
+                    st.code("\n".join(lines), language="text")
+        except Exception as exc:
+            st.error(f"Dumper monitor failed: {exc}")
+
+    if not dry_run and confirm.strip().upper() != "DUMP":
+        st.info('Live dump is blocked until confirmation text is exactly "DUMP".')
 
 
 # ============================================================================
@@ -683,6 +1378,7 @@ def _auto_select_port(
     model: str,
     config: dict,
     ports: list[str],
+    perform_handshake: bool = False,
 ) -> tuple[Optional[str], str]:
     """
     Auto-select a likely port using bounded probing and explicit fallback rules.
@@ -698,23 +1394,28 @@ def _auto_select_port(
     metadata = _list_port_metadata()
     ranked_ports = _rank_ports_for_autoselect(ports, metadata)
 
+    # Fast-path: a single detected port is usually the best default selection.
+    if len(ports) == 1:
+        return ports[0], f"Auto-selected only detected port ({ports[0]})."
+
     probed = ranked_ports[: min(AUTO_PROBE_PORT_LIMIT, len(ranked_ports))]
     handshake_hits = []
     handshake_failed = set()
 
-    for dev in probed:
-        probe = _probe_radio_identity(dev, model, config, timeout_cap=AUTO_PROBE_TIMEOUT_SEC)
-        if probe.get("ok"):
-            handshake_hits.append(dev)
-        else:
-            handshake_failed.add(dev)
-            logger.info("Auto-probe handshake failed on %s: %s", dev, probe.get("error", "unknown"))
+    if perform_handshake:
+        for dev in probed:
+            probe = _probe_radio_identity(dev, model, config, timeout_cap=AUTO_PROBE_TIMEOUT_SEC)
+            if probe.get("ok"):
+                handshake_hits.append(dev)
+            else:
+                handshake_failed.add(dev)
+                logger.info("Auto-probe handshake failed on %s: %s", dev, probe.get("error", "unknown"))
 
-    if len(handshake_hits) == 1:
-        return handshake_hits[0], f"Auto-selected by successful handshake on {handshake_hits[0]}."
+        if len(handshake_hits) == 1:
+            return handshake_hits[0], f"Auto-selected by successful handshake on {handshake_hits[0]}."
 
-    if len(handshake_hits) > 1:
-        return None, "Multiple radios responded; select port manually."
+        if len(handshake_hits) > 1:
+            return None, "Multiple radios responded; select port manually."
 
     medium_ranked = []
     for dev in ranked_ports:
@@ -734,7 +1435,9 @@ def _auto_select_port(
         dev, score = medium_ranked[0]
         return dev, f"Auto-selected strongest medium-confidence port ({dev}, score={score})."
 
-    return None, f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached. No unique high-confidence candidate."
+    if perform_handshake:
+        return None, f"Auto-probe limit {AUTO_PROBE_PORT_LIMIT} reached. No unique high-confidence candidate."
+    return None, "No unique medium-confidence candidate. Select port manually."
 
 
 def _probe_connection_status(port: str, model: str, config: dict, force: bool = False) -> dict:
@@ -746,7 +1449,7 @@ def _probe_connection_status(port: str, model: str, config: dict, force: bool = 
     if not force and same_target and fresh:
         return cache
 
-    probe = _probe_radio_identity(port, model, config, timeout_cap=1.5)
+    probe = _probe_radio_identity(port, model, config, timeout_cap=CONNECTION_PROBE_TIMEOUT_SEC)
     # Intentionally avoid strict model-string validation here. UV-5RM can
     # report UV-17-family IDs while still using the same A5 logo protocol.
     cache = {
@@ -961,11 +1664,9 @@ def _render_connection_health(model: str, config: dict, port: str, ports: list[s
         desired_show_controls = not ready_now
         if st.session_state.connection_show_controls != desired_show_controls:
             st.session_state.connection_show_controls = desired_show_controls
-            st.rerun()
     elif bool(last_ready) != ready_now:
         st.session_state.connection_last_ready = ready_now
         st.session_state.connection_show_controls = not ready_now
-        st.rerun()
 
     return probe
 
@@ -1007,6 +1708,7 @@ def tab_boot_logo_flasher():
                 model=selected_model,
                 config=dict(SERIAL_FLASH_CONFIGS[selected_model]),
                 ports=ports,
+                perform_handshake=False,
             )
             st.session_state.connection_last_ports_snapshot = ports_snapshot
             st.session_state.connection_autoselect_reason = reason
@@ -1062,8 +1764,6 @@ def tab_boot_logo_flasher():
             st.session_state.connection_show_controls = False
         if not ready_now:
             st.session_state.connection_show_controls = True
-        if show_controls != st.session_state.connection_show_controls:
-            st.rerun()
 
     with top_right:
         step2_tip_rows = [

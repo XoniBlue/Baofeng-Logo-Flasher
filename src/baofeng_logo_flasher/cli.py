@@ -48,6 +48,13 @@ from baofeng_logo_flasher.models import (
     SafetyLevel,
 )
 
+from baofeng_logo_flasher.firmware_tools import (
+    flash_vendor_bf_serial,
+    unwrap_bf_bytes,
+    wrap_bf_bytes,
+    parse_bf_header,
+)
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -649,6 +656,122 @@ def upload_logo_serial(
     print_success(result.metadata.get("result_message", "Serial upload complete"))
     if debug_bytes:
         print_success(f"Debug artifacts written to {debug_dir}")
+
+
+@app.command("flash-firmware-vendor-serial")
+def flash_firmware_vendor_serial(
+    port: str = typer.Option(..., "--port", "-p", help="Serial port"),
+    input_path: str = typer.Option(..., "--in", "-i", help="Input firmware (.BF preferred; .bin can be wrapped)"),
+    dry_run: bool = typer.Option(True, "--dry-run/--write-run", help="Dry-run only (default)"),
+    probe_handshake: bool = typer.Option(
+        False,
+        "--probe-handshake",
+        help="In dry-run: perform PROGRAM/UPDATE handshake (expects ACKs)",
+    ),
+    probe_packets: bool = typer.Option(
+        False,
+        "--probe-packets",
+        help="In dry-run: also send cmd 66 + cmd 1 and verify framed packet responses",
+    ),
+    wrap_bin_to_bf: bool = typer.Option(
+        True,
+        "--wrap-bin/--no-wrap-bin",
+        help="If input is .bin, wrap it to .BF for vendor flashing",
+    ),
+    baudrate: int = typer.Option(115200, "--baudrate", "-b", help="Baud rate (vendor tool uses 115200)"),
+    timeout: float = typer.Option(1.0, "--timeout", help="Serial read timeout (seconds)"),
+    retries: int = typer.Option(5, "--retries", help="Packet retry attempts (vendor tool retries on 226)"),
+    model_tag: str = typer.Option("BFNORMAL", "--model-tag", help="Model tag for PROGRAM handshake (ASCII)"),
+    write: bool = typer.Option(False, "--write", help="Enable actual write (required for real flashing)"),
+    confirm: Optional[str] = typer.Option(
+        None,
+        "--confirm",
+        help="Non-interactive confirmation token (must be 'WRITE' for write operations)",
+    ),
+    output_json: bool = typer.Option(False, "--json", "-j", help="Output result as JSON"),
+) -> None:
+    """
+    Flash vendor .BF firmware update protocol over K-plug serial.
+
+    This uses the protocol extracted from the vendor Windows flasher:
+    PROGRAM/UPDATE handshake + 0xAA...CRC16...0xEF framed packets.
+    """
+    print_header("Vendor Firmware Flash (Serial)")
+
+    in_path = Path(input_path)
+    if not in_path.exists():
+        print_error(f"File not found: {in_path}")
+        raise typer.Abort()
+
+    blob = in_path.read_bytes()
+    bf_blob: bytes
+    fw_for_analysis: bytes
+    meta: dict = {"input_path": str(in_path)}
+
+    is_bf = in_path.suffix.lower() == ".bf"
+    if is_bf:
+        try:
+            hdr = parse_bf_header(blob)
+            meta.update(
+                {
+                    "source": "bf",
+                    "region_count": hdr.region_count,
+                    "firmware_len": hdr.firmware_len,
+                    "data_len": hdr.data_len,
+                }
+            )
+        except Exception as exc:
+            print_error(f"Failed to parse BF header: {exc}")
+            raise typer.Abort()
+        fw_for_analysis, _, _ = unwrap_bf_bytes(blob, decrypt_firmware=True, decrypt_data=False)
+        bf_blob = blob
+    else:
+        meta["source"] = "bin"
+        fw_for_analysis = blob
+        if not wrap_bin_to_bf:
+            print_error("Vendor flashing requires .BF input (or enable --wrap-bin).")
+            raise typer.Abort()
+        bf_blob = wrap_bf_bytes(fw_for_analysis, encrypt_firmware=True, encrypt_data=False)
+        meta["wrapped_to_bf_bytes"] = len(bf_blob)
+
+    if not dry_run:
+        confirm_write_with_details(
+            write_flag=write,
+            model="UV-5RM",
+            target_region="Vendor BF firmware update (K-plug serial)",
+            bytes_length=len(fw_for_analysis),
+            offset=0x08001000,
+            confirm_token=confirm,
+        )
+
+    logs: list[str] = []
+
+    def _log_cb(msg: str) -> None:
+        logs.append(msg)
+        logger.info("%s", msg)
+
+    result = flash_vendor_bf_serial(
+        port=port,
+        bf_blob=bf_blob,
+        baudrate=int(baudrate),
+        timeout=float(timeout),
+        retries=int(retries),
+        model_tag=model_tag.encode("ascii", errors="strict"),
+        dry_run=bool(dry_run),
+        probe_handshake=bool(probe_handshake),
+        probe_packets=bool(probe_packets),
+        log_cb=_log_cb,
+    )
+
+    out = {"result": result, "meta": meta}
+    if output_json:
+        console.print(json.dumps(out, indent=2))
+        return
+
+    # Human output
+    console.print()
+    console.print(Panel(json.dumps(result, indent=2), title="Result", expand=False))
+    console.print(Panel(json.dumps(meta, indent=2), title="Input", expand=False))
 
 
 def main() -> None:

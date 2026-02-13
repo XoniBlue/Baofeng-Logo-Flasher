@@ -43,6 +43,7 @@ out/previews/
 
 # Streamlit
 .streamlit/
+.run/streamlit.pid
 
 # Large local firmware/image artifacts
 Baofeng_5RM_MASTER.img
