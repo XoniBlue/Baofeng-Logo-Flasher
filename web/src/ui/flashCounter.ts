@@ -1,4 +1,8 @@
-const TELEMETRY_BASE_URL = ((import.meta.env.VITE_TELEMETRY_BASE_URL as string | undefined)?.trim() ?? "").replace(/\/$/, "");
+const LOG_INGEST_URL = (import.meta.env.VITE_LOG_INGEST_URL as string | undefined)?.trim() ?? "";
+const TELEMETRY_BASE_URL = (
+  (import.meta.env.VITE_TELEMETRY_BASE_URL as string | undefined)?.trim() ??
+  ""
+).replace(/\/$/, "");
 const APP_VERSION = (import.meta.env.VITE_APP_VERSION as string | undefined)?.trim() || "dev";
 
 // Guards against duplicate increments caused by retries or repeated UI events.
@@ -14,6 +18,12 @@ interface UnifiedEventResponse {
 }
 
 function requireTelemetryBaseUrl(): string {
+  if (TELEMETRY_BASE_URL) {
+    return TELEMETRY_BASE_URL;
+  }
+  if (LOG_INGEST_URL) {
+    return LOG_INGEST_URL.replace(/\/client-log\/?$/, "").replace(/\/$/, "");
+  }
   if (!TELEMETRY_BASE_URL) {
     throw new Error("VITE_TELEMETRY_BASE_URL is required");
   }

@@ -97,10 +97,12 @@ function sendBody(url: string, body: string): void {
 }
 
 function sendUnifiedEvent(payload: UnifiedTelemetryPayload): void {
-  if (!TELEMETRY_UNIFIED_ENABLED || !TELEMETRY_BASE_URL) {
+  const derivedBaseUrl =
+    TELEMETRY_BASE_URL || (LOG_INGEST_URL ? LOG_INGEST_URL.replace(/\/client-log\/?$/, "").replace(/\/$/, "") : "");
+  if (!TELEMETRY_UNIFIED_ENABLED || !derivedBaseUrl) {
     return;
   }
-  sendBody(`${TELEMETRY_BASE_URL}/event`, JSON.stringify(payload));
+  sendBody(`${derivedBaseUrl}/event`, JSON.stringify(payload));
 }
 
 /** Sends privacy-minimized diagnostics to configured Cloudflare endpoints. */
