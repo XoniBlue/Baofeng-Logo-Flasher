@@ -13,10 +13,19 @@ import { FlashPanel } from "./ui/components/FlashPanel";
 import { ImagePanel } from "./ui/components/ImagePanel";
 import { PortPanel } from "./ui/components/PortPanel";
 import { StatusLog } from "./ui/components/StatusLog";
+import { ConfirmWriteModal } from "./ui/components/ConfirmWriteModal";
 import { fetchGlobalFlashCount, recordSuccessfulFlashOnce } from "./ui/flashCounter";
 import { reportClientError } from "./ui/clientLogReporter";
+import { friendlyErrorMessage } from "./ui/errorMessages";
 import walkieTalkieIcon from "../walkie-talkie.svg";
 import packageJson from "../package.json";
+
+/** Log entry with severity level for visual differentiation. */
+export interface LogEntry {
+  timestamp: string;
+  message: string;
+  level: "info" | "success" | "error" | "warn";
+}
 
 /** Builds contiguous frame stream used by simulation mode and debug parity checks. */
 function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array {
@@ -35,10 +44,16 @@ function toFrameStream(payload: Uint8Array, mode: "byte" | "chunk"): Uint8Array 
   return stream;
 }
 
+/** Detects mobile devices that cannot support Web Serial. */
+function isMobileDevice(): boolean {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 /** Top-level flasher UI and orchestration logic for image prep and upload actions. */
 export default function App(): JSX.Element {
   const appSemver = packageJson.version;
   const webSerialSupported = isWebSerialSupported();
+  const isMobile = isMobileDevice();
   const defaultModel = SERIAL_FLASH_CONFIGS[0];
   const loadedModel = loadModel(defaultModel.model);
   const selectedFromStorage = SERIAL_FLASH_CONFIGS.find((item) => item.model === loadedModel) ?? defaultModel;
@@ -46,32 +61,47 @@ export default function App(): JSX.Element {
   const [selectedModel, setSelectedModel] = useState(selectedFromStorage);
   const [writeMode, setWriteMode] = useState(loadWriteMode());
   const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [operationStatus, setOperationStatus] = useState("");
   const [payload, setPayload] = useState<Uint8Array | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
-  const [logs, setLogs] = useState<string[]>([]);
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [totalFlashes, setTotalFlashes] = useState<number | null>(null);
+  const [showWriteModal, setShowWriteModal] = useState(false);
 
   const serialRef = useRef(new WebSerialPort());
 
   const canFlash = useMemo(() => payload !== null && (!writeMode || connected), [payload, writeMode, connected]);
 
-  /** Appends timestamped log lines for protocol and UI events. */
-  const appendLog = (line: string): string => {
-    const stamped = `[${new Date().toISOString()}] ${line}`;
-    setLogs((prev) => [...prev, stamped]);
-    return stamped;
+  /** Appends timestamped log lines for protocol and UI events with severity level. */
+  const appendLog = (line: string, level: LogEntry["level"] = "info"): string => {
+    const timestamp = new Date().toISOString();
+    const entry: LogEntry = { timestamp, message: line, level };
+    setLogs((prev) => [...prev, entry]);
+    return `[${timestamp}] ${line}`;
   };
 
+  // Cache and load flash counter from localStorage for instant display
   useEffect(() => {
     let mounted = true;
+    
+    // Load cached count immediately
+    const cached = localStorage.getItem("lastKnownFlashCount");
+    if (cached) {
+      setTotalFlashes(parseInt(cached, 10));
+    }
+
+    // Fetch fresh count in background
     void fetchGlobalFlashCount()
       .then((count) => {
         if (mounted) {
           setTotalFlashes(count);
+          localStorage.setItem("lastKnownFlashCount", String(count));
         }
       })
       .catch((counterError) => {
@@ -136,13 +166,16 @@ export default function App(): JSX.Element {
     }
     setPayload(converted.bytes);
     setPreviewUrl(converted.previewUrl);
-    appendLog(`Image prepared (${converted.bytes.length} bytes)`);
+    setSelectedFileName(file.name);
+    appendLog(`Image prepared: ${file.name} (${converted.bytes.length} bytes)`, "success");
   };
 
   /** Requests serial port and runs advisory probe without writing image data. */
   const onConnect = async (): Promise<void> => {
     setError("");
     setSuccess("");
+    setConnecting(true);
+    setOperationStatus("Connecting to serial port...");
     const connectLogs: string[] = [];
     const logConnect = (line: string): void => {
       connectLogs.push(appendLog(line));
@@ -151,17 +184,21 @@ export default function App(): JSX.Element {
       await serialRef.current.requestPort();
       setConnected(true);
       logConnect("Serial port selected");
+      
+      setOperationStatus("Probing radio identity...");
       const probeUploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
       const probeOk = await probeUploader.probeIdentity(logConnect);
+      
       if (probeOk) {
-        setSuccess("Advisory probe succeeded. Radio responded to A5 handshake.");
-        logConnect("Advisory identity probe: high confidence (A5 handshake ACK)");
+        setSuccess("Connected! Radio responded to handshake.");
+        appendLog("Advisory identity probe: high confidence (A5 handshake ACK)", "success");
       } else {
-        logConnect("Advisory identity probe: low confidence (no A5 handshake ACK)");
+        appendLog("Advisory identity probe: low confidence (no A5 handshake ACK)", "warn");
       }
     } catch (connectError) {
-      const errorText = String(connectError);
+      const errorText = friendlyErrorMessage(connectError);
       setError(errorText);
+      appendLog(`Connection error: ${errorText}`, "error");
       reportClientError({
         eventType: "connect_error",
         message: errorText,
@@ -172,15 +209,47 @@ export default function App(): JSX.Element {
         connected,
         logLines: connectLogs
       });
+    } finally {
+      setConnecting(false);
+      setOperationStatus("");
     }
   };
 
-  /** Runs simulation or full upload depending on write mode toggle. */
-  const onFlash = async (): Promise<void> => {
+  /** Disconnects from serial port. */
+  const onDisconnect = async (): Promise<void> => {
+    try {
+      await serialRef.current.close();
+      setConnected(false);
+      setSuccess("");
+      appendLog("Disconnected from serial port", "info");
+    } catch (disconnectError) {
+      const errorText = friendlyErrorMessage(disconnectError);
+      setError(errorText);
+      appendLog(`Disconnect error: ${errorText}`, "error");
+    }
+  };
+
+  /** Initiates flash process, showing modal for write mode confirmation. */
+  const onFlashClick = (): void => {
     if (!payload) {
       setError("Select an image first.");
       return;
     }
+
+    if (writeMode) {
+      setShowWriteModal(true);
+    } else {
+      void onFlash(false);
+    }
+  };
+
+  /** Runs simulation or full upload depending on write mode toggle. */
+  const onFlash = async (confirmed: boolean): Promise<void> => {
+    if (!payload) {
+      setError("Select an image first.");
+      return;
+    }
+    
     setBusy(true);
     setError("");
     setSuccess("");
@@ -196,24 +265,31 @@ export default function App(): JSX.Element {
       logFlash(`Write address mode: ${addressMode.toUpperCase()}`);
 
       if (!writeMode) {
+        setOperationStatus("Running simulation...");
         const frameStream = toFrameStream(payload, addressMode);
         setProgress(100);
-        setSuccess("Simulation complete.");
-        logFlash(`Simulation complete (${frameStream.length} frame-stream bytes)`);
+        setSuccess("Simulation complete! Frame generation successful.");
+        appendLog(`Simulation complete (${frameStream.length} frame-stream bytes)`, "success");
+        setOperationStatus("");
         return;
       }
 
-      // Explicit confirmation gate before any irreversible device write.
-      const token = window.prompt("Type WRITE to confirm radio write:");
+      // Write mode with explicit confirmation
+      if (!confirmed) {
+        setBusy(false);
+        return;
+      }
+
       requireWritePermission({
         writeEnabled: writeMode,
-        confirmationToken: token,
-        interactive: true,
+        confirmationToken: "WRITE",
+        interactive: false,
         modelDetected: selectedModel.model,
         regionKnown: SERIAL_FLASH_CONFIGS.some((cfg) => cfg.model === selectedModel.model),
         simulate: false
       });
 
+      setOperationStatus("Writing to radio...");
       const flashSessionId = crypto.randomUUID();
       const uploader = new LogoUploader(serialRef.current, selectedModel.timeoutMs);
       const { frameCount } = await uploader.upload(payload, {
@@ -235,16 +311,17 @@ export default function App(): JSX.Element {
       }).then((updatedCount) => {
         if (updatedCount !== null) {
           setTotalFlashes(updatedCount);
+          localStorage.setItem("lastKnownFlashCount", String(updatedCount));
         }
       });
 
       setProgress(100);
-      setSuccess("Flash complete. Power cycle the radio to view the logo.");
-      logFlash(`Flash complete (${frameCount} frames)`);
+      setSuccess("Flash complete!");
+      appendLog(`Flash complete (${frameCount} frames)`, "success");
     } catch (flashError) {
-      const errorText = String(flashError);
+      const errorText = friendlyErrorMessage(flashError);
       setError(errorText);
-      flashLogs.push(appendLog(`Error: ${errorText}`));
+      appendLog(`Flash error: ${errorText}`, "error");
       reportClientError({
         eventType: "flash_error",
         message: errorText,
@@ -257,8 +334,58 @@ export default function App(): JSX.Element {
       });
     } finally {
       setBusy(false);
+      setOperationStatus("");
     }
   };
+
+  // Mobile device blocker
+  if (isMobile) {
+    return (
+      <div className="device-blocker">
+        <div className="device-blocker-content">
+          <h1>📱 Mobile Not Supported</h1>
+          <p>This tool requires <strong>Web Serial API</strong>, which is not available on mobile browsers.</p>
+          <p><strong>Please use a desktop browser:</strong></p>
+          <ul>
+            <li>Chrome (recommended)</li>
+            <li>Edge</li>
+            <li>Brave</li>
+            <li>Opera</li>
+          </ul>
+          <p className="muted">Web Serial requires direct USB access, which is unavailable on mobile operating systems.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Browser compatibility blocker
+  if (!webSerialSupported) {
+    return (
+      <div className="device-blocker">
+        <div className="device-blocker-content">
+          <h1>⚠️ Browser Not Supported</h1>
+          <p>This app requires <strong>Chrome</strong> or <strong>Chromium-based browsers</strong> (Edge, Brave, Opera).</p>
+          <p>Web Serial API is <strong>not available</strong> in:</p>
+          <ul>
+            <li>❌ Firefox</li>
+            <li>❌ Safari</li>
+            <li>❌ Mobile browsers</li>
+          </ul>
+          <a 
+            className="download-button" 
+            href="https://www.google.com/chrome/" 
+            target="_blank" 
+            rel="noreferrer"
+          >
+            Download Chrome
+          </a>
+          <p className="muted" style={{ marginTop: "16px" }}>
+            {browserConstraintMessage()}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -280,8 +407,6 @@ export default function App(): JSX.Element {
           </a>
         </div>
       </header>
-
-      {!webSerialSupported ? <div className="error">{browserConstraintMessage()}</div> : null}
 
       <section className="panel">
         <h2>Profile</h2>
@@ -306,14 +431,23 @@ export default function App(): JSX.Element {
       </section>
 
       <div className="grid">
-        <PortPanel connected={connected} onConnect={onConnect} disabled={!webSerialSupported || busy} />
+        <PortPanel 
+          connected={connected} 
+          connecting={connecting}
+          onConnect={onConnect}
+          onDisconnect={onDisconnect}
+          disabled={busy} 
+        />
         <ImagePanel
           previewUrl={previewUrl}
+          selectedFileName={selectedFileName}
           onSelectFile={async (file) => {
             try {
               await onSelectFile(file);
             } catch (imageError) {
-              setError(String(imageError));
+              const errorText = friendlyErrorMessage(imageError);
+              setError(errorText);
+              appendLog(`Image error: ${errorText}`, "error");
             }
           }}
         />
@@ -322,22 +456,57 @@ export default function App(): JSX.Element {
       <FlashPanel
         writeMode={writeMode}
         progress={progress}
+        operationStatus={operationStatus}
         busy={busy}
         canFlash={canFlash}
         onWriteModeChange={(enabled) => {
           setWriteMode(enabled);
           saveWriteMode(enabled);
         }}
-        onFlash={onFlash}
+        onFlash={onFlashClick}
       />
 
       {error ? <div className="error">{error}</div> : null}
-      {success ? <div className="success">{success}</div> : null}
+      
+      {success && !writeMode && (
+        <div className="simulation-success">
+          <h3>✓ Simulation Complete</h3>
+          <p>Frame generation successful. Ready for real flash.</p>
+          <p className="muted">Enable Write Mode above to flash your radio.</p>
+        </div>
+      )}
+
+      {success && writeMode && (
+        <div className="flash-complete">
+          <h3>✓ Flash Complete!</h3>
+          <p><strong>Next steps:</strong></p>
+          <ol>
+            <li>Turn off your radio completely</li>
+            <li>Turn it back on</li>
+            <li>Your new logo will display during boot</li>
+          </ol>
+          <p className="muted">If the logo doesn't appear, try flashing again or check your radio's programming mode.</p>
+        </div>
+      )}
 
       <section className="panel">
         <h2>Logs</h2>
         <StatusLog logs={logs} />
       </section>
+
+      {showWriteModal && (
+        <ConfirmWriteModal
+          model={selectedModel.model}
+          onConfirm={() => {
+            setShowWriteModal(false);
+            void onFlash(true);
+          }}
+          onCancel={() => {
+            setShowWriteModal(false);
+            setBusy(false);
+          }}
+        />
+      )}
     </main>
   );
 }

@@ -1,16 +1,18 @@
 interface FlashPanelProps {
   writeMode: boolean;
   progress: number;
+  operationStatus: string;
   busy: boolean;
   canFlash: boolean;
   onWriteModeChange: (enabled: boolean) => void;
-  onFlash: () => Promise<void>;
+  onFlash: () => void;
 }
 
-/** Step 3 UI for write-mode controls and upload/simulation trigger. */
+/** Step 3 UI for write-mode controls and upload/simulation trigger with operation status. */
 export function FlashPanel({
   writeMode,
   progress,
+  operationStatus,
   busy,
   canFlash,
   onWriteModeChange,
@@ -24,12 +26,24 @@ export function FlashPanel({
           type="checkbox"
           checked={writeMode}
           onChange={(event) => onWriteModeChange(event.currentTarget.checked)}
+          disabled={busy}
         />
         Write mode (unchecked = simulation only)
       </label>
+      
+      {operationStatus && <div className="operation-status">{operationStatus}</div>}
+      
       <progress value={progress} max={100} />
-      <button disabled={busy || !canFlash} onClick={() => void onFlash()}>
-        {busy ? "Working..." : writeMode ? "Flash logo" : "Simulate"}
+      
+      <button disabled={busy || !canFlash} onClick={onFlash}>
+        {busy ? (
+          <>
+            <span className="spinner"></span>
+            {writeMode ? "Flashing..." : "Simulating..."}
+          </>
+        ) : (
+          writeMode ? "Flash logo" : "Simulate"
+        )}
       </button>
     </section>
   );

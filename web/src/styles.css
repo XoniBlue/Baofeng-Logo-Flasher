@@ -181,22 +181,27 @@ h1 {
 /* Shared control styling for form inputs and buttons. */
 button,
 select,
-input[type="file"] {
+input[type="file"],
+input[type="text"] {
   width: 100%;
   padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
   color: var(--text);
   background: rgba(9, 18, 34, 0.8);
+  font-family: inherit;
+  font-size: inherit;
 }
 
 select,
-input[type="file"] {
+input[type="file"],
+input[type="text"] {
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 select:focus-visible,
 input[type="file"]:focus-visible,
+input[type="text"]:focus-visible,
 button:focus-visible {
   outline: none;
   border-color: rgba(106, 169, 255, 0.8);
@@ -210,6 +215,10 @@ button {
   border: 1px solid rgba(118, 242, 198, 0.35);
   font-weight: 700;
   transition: transform 120ms ease, filter 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 button:hover:not(:disabled) {
@@ -232,6 +241,33 @@ button:disabled {
   background: #000;
 }
 
+/* File selection info display */
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(25, 162, 122, 0.15);
+  border: 1px solid rgba(25, 162, 122, 0.3);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.file-icon {
+  flex-shrink: 0;
+  font-size: 1.2rem;
+}
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ok);
+  font-weight: 600;
+}
+
 /* Inline checkbox row used by write mode toggle. */
 .inline-check {
   display: flex;
@@ -242,6 +278,19 @@ button:disabled {
 
 .inline-check input {
   width: auto;
+}
+
+/* Operation status text shown during async operations */
+.operation-status {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  color: #93c5fd;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: center;
 }
 
 /* Operation status banners for failures/successes. */
@@ -264,6 +313,54 @@ button:disabled {
   background: rgba(20, 83, 45, 0.25);
 }
 
+/* Simulation success card */
+.simulation-success {
+  background: rgba(20, 83, 45, 0.25);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.simulation-success h3 {
+  margin: 0 0 8px;
+  color: var(--ok);
+  font-size: 1.1rem;
+}
+
+.simulation-success p {
+  margin: 4px 0;
+}
+
+/* Flash complete instructions card */
+.flash-complete {
+  background: rgba(20, 83, 45, 0.25);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.flash-complete h3 {
+  margin: 0 0 12px;
+  color: var(--ok);
+  font-size: 1.1rem;
+}
+
+.flash-complete p {
+  margin: 8px 0;
+}
+
+.flash-complete ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.flash-complete li {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
 /* Scrollable protocol log output panel. */
 .log-box {
   max-height: 260px;
@@ -272,10 +369,45 @@ button:disabled {
   overflow-wrap: anywhere;
   word-break: break-word;
   background: var(--panel-strong);
-  color: #c1ebde;
   border-radius: 10px;
   border: 1px solid var(--border);
   padding: 10px;
+}
+
+.log-entry {
+  padding: 4px 0;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.log-timestamp {
+  opacity: 0.6;
+  margin-right: 8px;
+  font-size: 0.8rem;
+}
+
+.log-message {
+  word-wrap: break-word;
+}
+
+.log-error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.log-success {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.log-warn {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.log-info {
+  color: #c1ebde;
 }
 
 .muted {
@@ -304,6 +436,179 @@ progress::-moz-progress-bar {
   border-radius: 999px;
 }
 
+/* Loading spinner animation */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Modal overlay and content */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content {
+  background: var(--panel-strong);
+  border: 2px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  padding: 28px;
+  max-width: 480px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-content h2 {
+  margin-top: 0;
+  color: var(--danger);
+}
+
+.modal-content p {
+  line-height: 1.6;
+  margin: 8px 0;
+}
+
+.modal-instruction {
+  font-weight: 700;
+  margin-top: 16px;
+  margin-bottom: 12px;
+}
+
+.modal-instruction code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 20px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.modal-actions button {
+  flex: 1;
+}
+
+.button-secondary {
+  background: linear-gradient(180deg, #4a5565 0%, #3c4655 100%) !important;
+  border-color: rgba(157, 175, 196, 0.38) !important;
+}
+
+.button-danger {
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%) !important;
+  border-color: rgba(251, 113, 133, 0.45) !important;
+}
+
+/* Device blocker for unsupported browsers/mobile */
+.device-blocker {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 9999;
+}
+
+.device-blocker-content {
+  max-width: 500px;
+  text-align: center;
+  padding: 40px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.device-blocker-content h1 {
+  color: var(--danger);
+  margin-bottom: 20px;
+  font-size: 1.8rem;
+}
+
+.device-blocker-content p {
+  margin: 12px 0;
+  line-height: 1.6;
+}
+
+.device-blocker-content ul {
+  text-align: left;
+  margin: 16px auto;
+  display: inline-block;
+  line-height: 1.8;
+}
+
+.device-blocker-content li {
+  margin: 8px 0;
+}
+
+.download-button {
+  display: inline-block;
+  margin-top: 20px;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, #1ba579 0%, #167e60 100%);
+  color: white;
+  text-decoration: none;
+  border-radius: 8px;
+  font-weight: 700;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+
+.download-button:hover {
+  filter: brightness(1.1);
+  transform: translateY(-2px);
+}
+
 /* Mobile layout adjustments. */
 @media (max-width: 780px) {
   .app-shell {
@@ -326,6 +631,14 @@ progress::-moz-progress-bar {
   h1 {
     justify-content: flex-start;
   }
+
+  .modal-content {
+    padding: 20px;
+  }
+
+  .device-blocker-content {
+    padding: 30px 20px;
+  }
 }
 
 @media (max-width: 420px) {
@@ -343,5 +656,17 @@ progress::-moz-progress-bar {
   .info-badge-value {
     padding: 4px 8px;
     font-size: 0.86rem;
+  }
+
+  .modal-content {
+    padding: 16px;
+  }
+
+  .device-blocker-content {
+    padding: 24px 16px;
+  }
+
+  .device-blocker-content h1 {
+    font-size: 1.5rem;
   }
 }
