@@ -1,3 +1,20 @@
+# User-specified files
+audit.txt
+BF_Upgrade_Tool_for_TFT_330L_Series.exe
+BRICK_RECOVERY_5RM.md
+README.root.backup.md
+XM25QH16C_Ver1.7.pdf
+dumper_monitor_fixes.md
+
+# Additional recommendations
+.mypy_cache/
+.ipynb_checkpoints/
+*.lock
+*.orig
+*.pkl
+*.sqlite3
+*.env
+node_modules/
 Baofeng_DM-32UV_Picture_Tool/
 # Ignore patterns for git
 .venv/

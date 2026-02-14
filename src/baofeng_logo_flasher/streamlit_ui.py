@@ -404,27 +404,23 @@ def main():
     )
 
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "⚡ Boot Logo Flasher",
-        "🧩 Firmware Extract/Rebuild",
-        "🚀 Firmware Flash",
-        "📥 Firmware Dump",
-        "📋 Capabilities",
-    ])
+    #
+    # Keep firmware workflows unified under a single top-level tab for a smoother UX.
+    tab1, tab2, tab3 = st.tabs(
+        [
+            "⚡ Boot Logo Flasher",
+            "🧩 Firmware",
+            "📋 Capabilities",
+        ]
+    )
 
     with tab1:
         tab_boot_logo_flasher()
 
     with tab2:
-        tab_firmware_extract_rebuild()
+        tab_firmware()
 
     with tab3:
-        tab_firmware_flash()
-
-    with tab4:
-        tab_firmware_dump()
-
-    with tab5:
         tab_capabilities()
 
 def launch() -> None:
@@ -610,6 +606,53 @@ def tab_capabilities():
 # ============================================================================
 # TAB: FIRMWARE EXTRACT / REBUILD / FLASH / DUMP
 # ============================================================================
+
+def tab_firmware() -> None:
+    """Unified firmware workflows (extract/rebuild, flash, dump)."""
+    _render_section_header(
+        "Firmware",
+        [
+            "Choose a workflow below. Most actions here can brick radios if used incorrectly.",
+            "Recommended safety flow: dump or verify first, then rebuild, then flash.",
+        ],
+        "Firmware help",
+    )
+    st.caption("This tab groups firmware tools into a single place. Use the workflow selector to switch sections.")
+
+    view_cols = st.columns([3.2, 1.1], vertical_alignment="center")
+    with view_cols[0]:
+        section = st.radio(
+            "Firmware workflow",
+            options=[
+                "🧩 Extract / Rebuild",
+                "📥 Dump",
+                "🚀 Flash",
+            ],
+            index=0,
+            horizontal=True,
+            key="firmware_unified_section",
+            label_visibility="collapsed",
+        )
+    with view_cols[1]:
+        show_all = st.toggle("Show all", value=False, key="firmware_unified_show_all")
+    st.divider()
+
+    if show_all:
+        with st.expander("🧩 Extract / Rebuild", expanded=section.startswith("🧩")):
+            tab_firmware_extract_rebuild()
+        with st.expander("📥 Dump", expanded=section.startswith("📥")):
+            tab_firmware_dump()
+        with st.expander("🚀 Flash", expanded=section.startswith("🚀")):
+            tab_firmware_flash()
+        return
+
+    if section.startswith("🧩"):
+        tab_firmware_extract_rebuild()
+    elif section.startswith("📥"):
+        tab_firmware_dump()
+    else:
+        tab_firmware_flash()
+
 
 def _render_serial_selector(prefix: str, *, default_baud: int = 9600) -> tuple[str, int, float]:
     """Shared serial selector for firmware tabs."""
