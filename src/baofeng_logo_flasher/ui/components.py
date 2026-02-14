@@ -448,7 +448,7 @@ def render_feature_sidebar() -> Optional[str]:
     Returns:
         Selected feature ID or None
     """
-    from baofeng_logo_flasher.features import get_sidebar_navigation, RiskLevel
+    from baofeng_logo_flasher.core.features import get_sidebar_navigation, RiskLevel
 
     st.sidebar.markdown("## 📻 Features")
 

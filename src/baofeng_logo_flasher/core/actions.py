@@ -75,7 +75,7 @@ def prepare_logo_bytes(
         ValueError: If format is invalid
         FileNotFoundError: If input file doesn't exist
     """
-    from baofeng_logo_flasher.logo_codec import LogoCodec
+    from baofeng_logo_flasher.utils.logo_codec import LogoCodec
 
     path = Path(input_image_path)
     if not path.exists():
@@ -150,7 +150,7 @@ def flash_logo_serial(
         )
 
         try:
-            from baofeng_logo_flasher.boot_logo import flash_logo as _flash_logo_impl
+            from baofeng_logo_flasher.core.boot_logo import flash_logo as _flash_logo_impl
 
             result_str = _flash_logo_impl(
                 port=port,

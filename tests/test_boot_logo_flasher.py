@@ -1,4 +1,4 @@
-"""Tests for A5-only boot logo flasher module."""
+"""Tests for boot-logo flashing module (A5 + DM32UV vendor path)."""
 
 import tempfile
 from pathlib import Path
@@ -24,14 +24,15 @@ def _make_image(tmp_path: Path, size=(160, 128)) -> str:
 class TestA5ModelConfigs:
     """Test A5 model configuration set."""
 
-    def test_only_a5_models_are_present(self):
-        """Serial flash configs should only include supported A5 models."""
+    def test_required_a5_models_are_present(self):
+        """Serial flash configs must include the supported A5 models."""
         expected = {"UV-5RM", "UV-17Pro", "UV-17R"}
-        assert set(SERIAL_FLASH_CONFIGS.keys()) == expected
+        assert expected.issubset(set(SERIAL_FLASH_CONFIGS.keys()))
 
-    def test_all_models_use_a5_protocol(self):
-        """Every serial config should be A5 protocol with chunk addressing."""
-        for cfg in SERIAL_FLASH_CONFIGS.values():
+    def test_a5_models_use_a5_protocol(self):
+        """A5 models should use A5 protocol with chunk addressing."""
+        for name in ("UV-5RM", "UV-17Pro", "UV-17R"):
+            cfg = SERIAL_FLASH_CONFIGS[name]
             assert cfg.get("protocol") == "a5_logo"
             assert cfg.get("write_addr_mode") == "chunk"
             assert cfg.get("chunk_size") == 1024

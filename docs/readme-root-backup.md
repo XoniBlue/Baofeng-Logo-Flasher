@@ -14,11 +14,6 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 > **Recommended workflow:** use the local Streamlit web GUI.  
 > Run `make start`, then open `http://localhost:8501`.
 
-> [!IMPORTANT]
-> Firmware flashing (including the "dumper helper" firmware) can brick a UV-5RM.
-> If you lose UART bootloader responses, recovery typically requires **SWD**.
-> See `BRICK_RECOVERY_5RM.md`.
-
 ---
 
 ## Quick Navigation
@@ -33,7 +28,6 @@ Local, safety-gated boot logo flashing for supported Baofeng radios using serial
 - [8) Safety notes](#8-safety-notes)
 - [9) Troubleshooting](#9-troubleshooting)
 - [10) Where to get help / report issues](#10-where-to-get-help--report-issues)
-- [11) Technical documentation](#11-technical-documentation)
 
 ---
 
@@ -84,6 +78,10 @@ Current testing status:
 | `UV-5RM` | `upload-logo-serial` / Streamlit Step 3 | Supported |
 | `UV-17Pro` | `upload-logo-serial` / Streamlit Step 3 | Supported |
 | `UV-17R` | `upload-logo-serial` / Streamlit Step 3 | Supported |
+
+### Other models present in registry/capabilities
+
+`DM-32UV`, `UV-5RH Pro`, `UV-17R Pro`, `UV-5R`, `UV-5R-ORIG`, `UV-82`, `UV-6`, `F-11`, `A-58`, `UV-5G`, `F-8HP`, `UV-82HP`, `82X3`
 
 ---
 
@@ -316,19 +314,6 @@ CLI equivalent:
 
 ---
 
-## 11) Technical documentation
-
-For deep, code-grounded documentation, see:
-
-- `docs/architecture.md`
-- `docs/contributing.md`
-- `docs/protocol-spec.md`
-- `docs/user-guide.md`
-
----
-
 ## License
 
 MIT
-
-Main application code location: `/Baofeng_Logo_Flasher`.

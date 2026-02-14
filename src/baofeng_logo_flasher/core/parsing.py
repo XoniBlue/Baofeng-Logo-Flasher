@@ -6,7 +6,7 @@ Both CLI and Streamlit must import these helpers rather than re-implement.
 
 from typing import Optional
 
-from baofeng_logo_flasher.logo_codec import (
+from baofeng_logo_flasher.utils.logo_codec import (
     BitmapFormat,
     parse_bitmap_format as _parse_bitmap_format_core,
 )
