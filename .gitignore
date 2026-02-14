@@ -1,3 +1,4 @@
+Baofeng_DM-32UV_Picture_Tool/
 # Ignore patterns for git
 .venv/
 # Virtual environments
@@ -43,6 +44,7 @@ out/previews/
 
 # Streamlit
 .streamlit/
+streamlit.pid
 .run/streamlit.pid
 
 # Reverse engineering artifacts

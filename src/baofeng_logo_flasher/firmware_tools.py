@@ -422,7 +422,7 @@ def parse_dumper_log_lines(lines: Iterable[str]) -> Dict[str, DumpSegment]:
     return out
 
 
-def monitor_dumper_serial(
+def monitor_dumper_serial_guided(
     port: str,
     *,
     baudrate: int = 115200,
@@ -430,10 +430,27 @@ def monitor_dumper_serial(
     max_seconds: float = 45.0,
     idle_seconds: float = 3.0,
     log_cb: Optional[Callable[[str], None]] = None,
+    interactive: bool = True,
 ) -> DumperCapture:
-    """Equivalent to 'make dumper-monitor': read serial text and parse dumps."""
+    """
+    Monitor the dumper's UART output with power-cycle guidance.
+
+    Important: the dumper firmware is a one-shot tool. It prints once on boot
+    and then typically enters an infinite loop. To capture output reliably:
+    - open the serial port first
+    - then power on / power-cycle the radio
+    """
     if serial is None:
         raise FirmwareToolError("PySerial is required for serial monitoring")
+
+    if interactive:
+        print("=" * 70)
+        print("DUMPER MONITOR SETUP")
+        print("=" * 70)
+        print("The dumper firmware runs once on power-up and outputs to UART.")
+        print("Ensure the radio is powered OFF before starting.")
+        print("")
+        input("Press ENTER when the radio is OFF and ready...")
 
     ser = serial.Serial(
         port=port,
@@ -444,30 +461,222 @@ def monitor_dumper_serial(
         timeout=timeout,
         write_timeout=timeout,
     )
+
+    if interactive:
+        print("=" * 70)
+        print("Serial monitor is ACTIVE and waiting for data")
+        print("=" * 70)
+        print("Power ON the radio NOW to capture dumper output.")
+        print(f"Monitoring at {baudrate} baud for up to {max_seconds} seconds...")
+        print(f"(Auto-stops after {idle_seconds} seconds of idle once data starts.)")
+
     lines: List[str] = []
     start = time.time()
     last_rx = start
+    bytes_received = 0
     try:
         while True:
             now = time.time()
             if now - start >= max_seconds:
+                if log_cb:
+                    log_cb(f"[Monitor] Stopped: max time ({max_seconds}s) reached")
                 break
             if now - last_rx >= idle_seconds and lines:
+                if log_cb:
+                    log_cb(f"[Monitor] Stopped: idle timeout ({idle_seconds}s)")
                 break
 
             chunk = ser.readline()
             if not chunk:
                 continue
             last_rx = time.time()
+            bytes_received += len(chunk)
             line = chunk.decode("utf-8", errors="ignore").rstrip("\r\n")
             lines.append(line)
             if log_cb:
                 log_cb(line)
+
+            if interactive and len(lines) == 1:
+                print(f"Data detected at {baudrate} baud; capturing...")
     finally:
         ser.close()
 
     segments = parse_dumper_log_lines(lines)
+    if interactive:
+        print("=" * 70)
+        print("CAPTURE COMPLETE")
+        print("=" * 70)
+        print(f"Lines received: {len(lines)}")
+        print(f"Bytes received: {bytes_received}")
+        if not segments:
+            print("WARNING: No dump segments detected.")
+            print("If you saw no output at all, try:")
+            print("- different baud rates (9600/19200/38400/57600/115200)")
+            print("- verifying TX/RX wiring and that your K-plug matches the UART used by the dumper")
+            print("- power-cycling again (the dumper is one-shot)")
+
     return DumperCapture(raw_lines=lines, segments=segments)
+
+
+def scan_dumper_baud_rates(
+    port: str,
+    *,
+    baud_rates: List[int] = [9600, 19200, 38400, 57600, 115200],
+    test_duration: float = 5.0,
+) -> Dict[int, int]:
+    """
+    Scan multiple baud rates to see which one receives dumper output.
+
+    Note: you must power-cycle the radio for each baud rate attempt (one-shot dumper).
+    Returns a dict of {baud_rate: bytes_received}.
+    """
+    if serial is None:
+        raise FirmwareToolError("PySerial is required for serial monitoring")
+
+    results: Dict[int, int] = {}
+    print("=" * 70)
+    print("BAUD RATE SCANNER")
+    print("=" * 70)
+    print("Power-cycle the radio for EACH test (dumper output is one-shot).")
+
+    for i, baud in enumerate(baud_rates, start=1):
+        print(f"\n[Test {i}/{len(baud_rates)}] {baud} baud")
+        input("Ensure radio is POWERED OFF, then press ENTER...")
+
+        ser = serial.Serial(
+            port=port,
+            baudrate=baud,
+            bytesize=8,
+            parity="N",
+            stopbits=1,
+            timeout=0.1,
+            write_timeout=0.1,
+        )
+        print("Monitor active. Power ON the radio NOW.")
+
+        start = time.time()
+        total_bytes = 0
+        try:
+            while time.time() - start < test_duration:
+                chunk = ser.readline()
+                if not chunk:
+                    continue
+                total_bytes += len(chunk)
+        finally:
+            ser.close()
+
+        results[baud] = total_bytes
+        if total_bytes > 0:
+            print(f"  DATA DETECTED: {total_bytes} bytes")
+        else:
+            print("  No data detected")
+
+    print("\n" + "=" * 70)
+    print("SCAN RESULTS")
+    print("=" * 70)
+    for baud, bytes_rx in sorted(results.items(), key=lambda kv: kv[1], reverse=True):
+        marker = "OK " if bytes_rx > 0 else "   "
+        print(f"{marker}{baud:6d} baud: {bytes_rx:6d} bytes")
+
+    if results and max(results.values()) > 0:
+        best = max(results.items(), key=lambda kv: kv[1])[0]
+        print(f"\nRecommended: {best} baud")
+    else:
+        print("\nNo data detected at any baud rate.")
+        print("Troubleshooting:")
+        print("- verify USB-serial adapter and port selection")
+        print("- verify TX/RX wiring (swap if unsure)")
+        print("- the dumper may be using a different UART than the K-plug wiring")
+
+    return results
+
+
+def monitor_serial_raw(
+    port: str,
+    *,
+    baudrate: int = 115200,
+    duration: float = 10.0,
+    hex_display: bool = False,
+) -> bytes:
+    """
+    Raw serial monitor with no line parsing.
+
+    Useful when readline-based monitoring shows nothing (wrong line endings,
+    binary noise, etc.).
+    """
+    if serial is None:
+        raise FirmwareToolError("PySerial is required for serial monitoring")
+
+    print("=" * 70)
+    print("RAW SERIAL MONITOR")
+    print("=" * 70)
+    print(f"Port: {port}")
+    print(f"Baud: {baudrate}")
+    print(f"Duration: {duration}s")
+    input("Ensure radio is OFF, then press ENTER...")
+
+    ser = serial.Serial(
+        port=port,
+        baudrate=baudrate,
+        bytesize=8,
+        parity="N",
+        stopbits=1,
+        timeout=0.1,
+        write_timeout=0.1,
+    )
+    print("Monitor active. Power ON the radio NOW.")
+
+    start = time.time()
+    all_data = bytearray()
+    try:
+        while time.time() - start < duration:
+            chunk = ser.read(64)
+            if not chunk:
+                continue
+            all_data.extend(chunk)
+            if hex_display:
+                print(" ".join(f"{b:02X}" for b in chunk))
+            else:
+                # ASCII-ish display; show non-printables as <XX>
+                out = []
+                for b in chunk:
+                    if 32 <= b < 127:
+                        out.append(chr(b))
+                    else:
+                        out.append(f"<{b:02X}>")
+                print("".join(out))
+    finally:
+        ser.close()
+
+    print("=" * 70)
+    print(f"Captured {len(all_data)} bytes total")
+    return bytes(all_data)
+
+
+def monitor_dumper_serial(
+    port: str,
+    *,
+    baudrate: int = 115200,
+    timeout: float = 0.35,
+    max_seconds: float = 45.0,
+    idle_seconds: float = 3.0,
+    log_cb: Optional[Callable[[str], None]] = None,
+) -> DumperCapture:
+    """
+    LEGACY: Monitor dumper output without guided power-cycle prompts.
+
+    Warning: if the radio is already powered on, the dumper has likely already
+    run and you may capture nothing. Prefer monitor_dumper_serial_guided().
+    """
+    return monitor_dumper_serial_guided(
+        port=port,
+        baudrate=baudrate,
+        timeout=timeout,
+        max_seconds=max_seconds,
+        idle_seconds=idle_seconds,
+        log_cb=log_cb,
+        interactive=False,
+    )
 
 
 def save_capture_segments(capture: DumperCapture, output_dir: str | Path) -> Dict[str, Path]:
@@ -1185,6 +1394,9 @@ def flash_vendor_bf_serial(
     timeout: float = 1.0,
     retries: int = 5,
     model_tag: bytes = b"BFNORMAL",
+    firmware_type: Optional[str] = None,
+    allow_small_firmware: bool = False,
+    min_firmware_bytes: int = 10 * 1024,
     dry_run: bool = False,
     probe_handshake: bool = False,
     probe_packets: bool = False,
@@ -1208,6 +1420,33 @@ def flash_vendor_bf_serial(
 
     if progress_cb:
         progress_cb(0, total_bytes)
+
+    # Safety checks:
+    # - reject suspiciously small images unless explicitly allowed
+    # - if the decrypted payload looks like a dumper, require firmware_type="dumper"
+    try:
+        fw_for_analysis, _data_for_analysis, _hdr = unwrap_bf_bytes(bf_blob, decrypt_firmware=True, decrypt_data=False)
+    except Exception as exc:
+        raise FirmwareToolError(f"Failed to unwrap BF for analysis: {exc}")
+
+    if len(fw_for_analysis) < int(min_firmware_bytes) and not allow_small_firmware:
+        raise FirmwareToolError(
+            f"Refusing to flash very small firmware payload ({len(fw_for_analysis)} bytes). "
+            f"If this is intentional (e.g. a dumper), pass allow_small_firmware=True and "
+            f'firmware_type="dumper".'
+        )
+
+    dumper_signatures = [b"FLASH DUMPER", b"BD4VOW", b"FLASHDUMPER", b"DUMPER BY", b"BOOTLOADER ***"]
+    fw_upper = fw_for_analysis.upper()
+    matched = [s for s in dumper_signatures if s in fw_upper]
+    if matched:
+        if log_cb:
+            log_cb(f"Warning: firmware contains dumper-like signatures: {[m.decode('ascii', 'ignore') for m in matched]}")
+        if firmware_type != "dumper":
+            raise FirmwareToolError(
+                "This firmware appears to be a dumper image. Refusing to flash unless "
+                'firmware_type="dumper" is explicitly provided.'
+            )
 
     if dry_run:
         handshake_ok = "no"

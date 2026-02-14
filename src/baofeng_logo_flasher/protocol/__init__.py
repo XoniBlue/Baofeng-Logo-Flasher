@@ -17,6 +17,13 @@ from .logo_protocol import (
     IMAGE_BYTES,
     CHUNK_SIZE,
 )
+from .dm32uv_picture_protocol import (
+    DM32UVPictureUploader,
+    DM32UVProtocolError,
+    build_dm32uv_bin_from_image,
+    parse_dm32uv_bin,
+    DM32UVBinHeader,
+)
 
 __all__ = [
     # Transport
@@ -35,4 +42,10 @@ __all__ = [
     "IMAGE_HEIGHT",
     "IMAGE_BYTES",
     "CHUNK_SIZE",
+    # DM32UV picture protocol
+    "DM32UVPictureUploader",
+    "DM32UVProtocolError",
+    "build_dm32uv_bin_from_image",
+    "parse_dm32uv_bin",
+    "DM32UVBinHeader",
 ]

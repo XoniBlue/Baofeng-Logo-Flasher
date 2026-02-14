@@ -55,6 +55,7 @@ from baofeng_logo_flasher.firmware_tools import (
     list_factory_firmware,
     make_dumper_flash_equivalent,
     monitor_dumper_serial,
+    monitor_dumper_serial_guided,
     parse_hex_byte_string,
     patch_firmware_at_offset,
     save_capture_segments,
@@ -1108,6 +1109,8 @@ def tab_firmware_dump() -> None:
                     baudrate=baudrate,
                     timeout=timeout,
                     retries=5,
+                    firmware_type="dumper",
+                    allow_small_firmware=True,
                     dry_run=bool(simulate_only),
                     probe_handshake=bool(simulate_only and probe_handshake),
                     probe_packets=bool(simulate_only and probe_packets),
@@ -1152,18 +1155,44 @@ def tab_firmware_dump() -> None:
                 )
                 return
 
+            st.warning(
+                f"""
+**IMPORTANT SETUP INSTRUCTIONS**
+
+The dumper runs once on power-up. To capture output:
+
+1. Power OFF your radio now (if it's on).
+2. Click "Start Dumper Monitor".
+3. When the monitor starts, power ON the radio.
+4. Wait for capture to complete (up to {int(max_seconds)} seconds).
+
+If the radio is already on, the dumper has likely already run; power-cycle and retry.
+""".strip()
+            )
+
+            output_area = st.empty()
+            status_area = st.empty()
             lines: list[str] = []
+            bytes_total = 0
 
             def _log(line: str) -> None:
+                nonlocal bytes_total
                 lines.append(line)
+                bytes_total += len(line) + 1
+                output_area.code("\n".join(lines[-50:]), language="text")
+                status_area.info(f"Received {len(lines)} lines, ~{bytes_total} bytes")
 
-            with st.spinner("Monitoring dumper serial output..."):
-                capture = monitor_dumper_serial(
+            st.info("Monitor active and waiting. Power ON the radio NOW.")
+
+            with st.spinner(f"Monitoring for up to {int(max_seconds)} seconds..."):
+                capture = monitor_dumper_serial_guided(
                     port=port,
                     baudrate=baudrate,
                     timeout=timeout,
                     max_seconds=float(max_seconds),
+                    idle_seconds=3.0,
                     log_cb=_log,
+                    interactive=False,
                 )
 
             out_dir = Path("out") / "firmware_dumps" / datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1334,14 +1363,20 @@ def _probe_radio_identity(
     The returned radio_id string is advisory for UX and connection confidence;
     it is not a strict model gate for A5-family flashing.
     """
-    protocol = "uv17pro" if config.get("protocol") == "a5_logo" else "uv5r"
+    protocol = str(config.get("protocol") or "").strip().lower()
+    if protocol == "a5_logo":
+        probe_protocol = "uv17pro"
+    elif protocol == "dm32uv_picture":
+        probe_protocol = "dm32uv_picture"
+    else:
+        probe_protocol = "uv5r"
     try:
         radio_id = read_radio_id(
             port,
             magic=config.get("magic"),
             baudrate=int(config.get("baudrate", 115200)),
             timeout=min(float(config.get("timeout", 2.0)), timeout_cap),
-            protocol=protocol,
+            protocol=probe_protocol,
         )
         return {
             "port": port,

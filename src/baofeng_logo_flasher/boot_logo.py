@@ -1,4 +1,4 @@
-"""A5 boot logo flashing support for Baofeng UV-5RM / UV-17 family."""
+"""Boot logo flashing support for Baofeng UV-5RM / UV-17 family and DM-32UV picture tool protocol."""
 
 from typing import Dict, List, Optional, Callable
 import logging
@@ -26,7 +26,14 @@ class BootLogoError(Exception):
 
 
 def _build_serial_flash_configs() -> Dict[str, Dict]:
-    """Build A5 serial flash configs from registry."""
+    """Build serial flash configs.
+
+    Registry-derived A5 configs:
+    - UV-5RM / UV-17 family (A5 framing protocol)
+
+    Manually defined configs:
+    - DM-32UV vendor PowerOnPicture protocol ("dm32uv_picture")
+    """
     result: Dict[str, Dict] = {}
     for name in registry_list_models():
         reg_model = registry_get_model(name)
@@ -70,6 +77,31 @@ def _build_serial_flash_configs() -> Dict[str, Dict]:
                 f"Required A5 model missing from registry-derived configs: {model_name}"
             )
 
+    # DM-32UV "PowerOnPicture.exe" protocol (reverse engineered).
+    # - Serial 115200 8N1, DTR/RTS on
+    # - RGB565 payload, 240x320 for DM32 2-inch screen (per vendor readme)
+    # - Uses 'W' packets with 24-bit address + 16-bit length, ACK=0x06
+    #
+    # Unknown:
+    # - The vendor EXE uses a base address value for the 24-bit address field.
+    #   We default base_addr=0; advanced users can change start_addr if needed.
+    result["DM-32UV"] = {
+        "size": (240, 320),
+        "color_mode": "RGB565",
+        "encrypt": False,
+        "start_addr": 0x000000,  # Used as base_addr for W packets (24-bit)
+        "baudrate": 115200,
+        "timeout": 0.5,
+        "protocol": "dm32uv_picture",
+        "chunk_size": 0x1000,
+        "ack_timeout": 5.0,
+        "notes": [
+            "Vendor protocol from PowerOnPicture.exe",
+            "Writes RGB565 payload with 'W' packets (0x57) and 0x06 ACK",
+            "BIN files contain an 8-byte header; on-wire skips the first 8 bytes",
+        ],
+    }
+
     return result
 
 
@@ -104,11 +136,10 @@ def read_radio_id(
     if not serial:
         raise BootLogoError("PySerial not installed")
 
+    if protocol == "dm32uv_picture":
+        return _do_probe_dm32uv(port, baudrate=baudrate, timeout=timeout)
     if protocol != "uv17pro":
-        raise BootLogoError(
-            "Unsupported protocol for this build. "
-            "A5 logo flasher only supports uv17pro-family models."
-        )
+        raise BootLogoError(f"Unsupported read_radio_id protocol: {protocol}")
 
     # Default magic for UV-5RM/UV-17 family.
     if magic is None:
@@ -197,23 +228,115 @@ def flash_logo(
         raise BootLogoError("PySerial not installed")
 
     protocol_type = config.get("protocol", "")
-    if protocol_type != "a5_logo":
+    if protocol_type not in {"a5_logo", "dm32uv_picture"}:
         raise BootLogoError(
             "Unsupported protocol for this build. "
-            "Only A5 logo upload is available."
+            "Supported: a5_logo, dm32uv_picture."
         )
 
-    effective_write_address_mode = write_address_mode or config.get("write_addr_mode", "chunk")
-    return _flash_logo_a5_protocol(
+    if protocol_type == "a5_logo":
+        effective_write_address_mode = write_address_mode or config.get("write_addr_mode", "chunk")
+        return _flash_logo_a5_protocol(
+            port,
+            bmp_path,
+            config,
+            simulate,
+            progress_cb,
+            debug_bytes=debug_bytes,
+            debug_output_dir=debug_output_dir,
+            write_address_mode=effective_write_address_mode,
+        )
+
+    return _flash_logo_dm32uv_picture_protocol(
         port,
         bmp_path,
         config,
         simulate,
         progress_cb,
-        debug_bytes=debug_bytes,
-        debug_output_dir=debug_output_dir,
-        write_address_mode=effective_write_address_mode,
     )
+
+
+def _do_probe_dm32uv(port: str, *, baudrate: int = 115200, timeout: float = 0.5) -> str:
+    """
+    Minimal non-destructive reachability probe for DM-32UV.
+
+    The vendor tool sends "PSEARCH" and expects an 0x06 ACK in the response buffer.
+    We keep this probe lightweight and avoid entering PROGRAM mode.
+    """
+    if not serial:
+        raise BootLogoError("PySerial not installed")
+
+    ser = serial.Serial(
+        port=port,
+        baudrate=baudrate,
+        bytesize=8,
+        parity="N",
+        stopbits=1,
+        timeout=timeout,
+        write_timeout=timeout,
+        rtscts=False,
+        dsrdtr=False,
+    )
+    try:
+        ser.dtr = True
+        ser.rts = True
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+
+        ser.write(b"PSEARCH")
+        resp = ser.read(8)
+        if not resp or resp[:1] != b"\x06":
+            raise BootLogoError(f"DM32UV probe failed (resp={resp.hex() if resp else 'empty'})")
+        return "DM32UV (PSEARCH ACK)"
+    finally:
+        ser.close()
+
+
+def _flash_logo_dm32uv_picture_protocol(
+    port: str,
+    bmp_path: str,
+    config: Dict,
+    simulate: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> str:
+    """
+    Flash logo using the DM-32UV vendor PowerOnPicture protocol.
+    """
+    if simulate:
+        from PIL import Image
+
+        try:
+            img = Image.open(bmp_path)
+            w, h = config.get("size", (240, 320))
+            return (
+                f"Simulation: Would upload {img.size[0]}x{img.size[1]} image "
+                f"to {port} as {w}x{h} RGB565 using DM32UV picture protocol"
+            )
+        except Exception as e:
+            return f"Simulation: Would upload image to {port} (could not read: {e})"
+
+    from .protocol.dm32uv_picture_protocol import (
+        DM32UVPictureUploader,
+        build_dm32uv_bin_from_image,
+    )
+
+    w, h = config.get("size", (240, 320))
+    base_addr = int(config.get("start_addr", 0)) & 0xFFFFFF
+    ack_timeout = float(config.get("ack_timeout", 5.0))
+
+    bin_bytes = build_dm32uv_bin_from_image(bmp_path, size=(int(w), int(h)))
+
+    with DM32UVPictureUploader(
+        port=port,
+        baudrate=int(config.get("baudrate", 115200)),
+        timeout=float(config.get("timeout", 0.5)),
+        ack_timeout=ack_timeout,
+        base_addr=base_addr,
+        chunk_size=int(config.get("chunk_size", 0x1000)),
+    ) as uploader:
+        uploader.upload_bin(bin_bytes, progress_cb=progress_cb, do_preflight=True)
+
+    return "DM32UV picture upload complete. Power cycle the radio to see the new boot image."
 
 
 def _flash_logo_a5_protocol(
