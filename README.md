@@ -79,6 +79,8 @@ Current testing status:
 | `UV-5RM` | `upload-logo-serial` / Streamlit Step 3 | Supported |
 | `UV-17Pro` | `upload-logo-serial` / Streamlit Step 3 | Supported |
 | `UV-17R` | `upload-logo-serial` / Streamlit Step 3 | Supported |
+| `K5Plus` | `upload-logo-serial` / Streamlit Step 3 | Supported |
+
 
 ---
 
